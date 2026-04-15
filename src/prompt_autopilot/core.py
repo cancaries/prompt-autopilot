@@ -97,7 +97,14 @@ def detect_instruction_type(instruction: str) -> str:
     instruction_lower = instruction.lower()
     
     # Code-related
-    if any(word in instruction_lower for word in ["code", "function", "script", "implement", "debug", "fix", "refactor", "api", "database", "sql", "python", "javascript", "写代码", "函数", "调试"]):
+    code_keywords = [
+        "code", "function", "script", "implement", "debug", "fix", "refactor",
+        "api", "database", "sql", "python", "javascript", "java", "golang", "rust",
+        "写代码", "函数", "调试", "算法", "排序", "缓存", "队列", "栈",
+        "实现", "编程", "代码", "class", "method", "module",
+        "lr", "cache", "queue", "stack", "hash", "tree", "graph"
+    ]
+    if any(word in instruction_lower for word in code_keywords):
         return "code"
     
     # Writing
@@ -226,10 +233,10 @@ def generate_context_fillers(analysis: AnalysisResult, instruction: str) -> dict
             }
         elif instr_type == "explanation":
             fillers = {
-                "audience": "受众：谁？（初学者/学生/专业人士）",
-                "level": "理解程度：小白/有基础/专家",
-                "depth": "深度：简单概念/详细解释/技术细节",
-                "format": "格式：口语/书面/带例子",
+                "audience": "谁？（初学者/学生/专业人士）",
+                "level": "小白/有基础/专家",
+                "depth": "简单概念/详细解释/技术细节",
+                "format": "口语/书面/带例子",
             }
         else:
             fillers = {
