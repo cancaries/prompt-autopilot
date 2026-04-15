@@ -574,61 +574,92 @@ Please complete as requested."""
 
 def evaluate_version(version_text: str, analysis: AnalysisResult) -> EvaluationResult:
     """
-    Evaluate a version on clarity, specificity, and completeness.
+    Evaluate a version on whether it properly addresses the instruction's gaps.
+    
+    Scoring measures: Does the template help fill in missing information?
+    A well-structured template addressing gaps should score well even for brief instructions.
     """
     word_count = len(version_text.split())
     text_lower = version_text.lower()
-    
-    # Clarity: appropriate length, clear structure
-    if word_count < 15:
-        clarity = 5
-    elif word_count < 40:
-        clarity = 7
-    elif word_count < 100:
-        clarity = 9
-    elif word_count < 200:
-        clarity = 8
-    else:
-        clarity = 7
-    
-    # Specificity: has concrete requirements
-    specificity_keywords = [
-        "specific", "exactly", "must", "should", "format", "example",
-        "json", "list", "step", "constraint", "limitation",
-        "输入", "输出", "格式", "要求", "规范"
-    ]
-    specificity = min(10, 4 + sum(1 for kw in specificity_keywords if kw in text_lower) * 1.2)
-    
-    # Completeness: addresses missing elements from analysis
     missing = analysis.get("missing", [])
+    
+    # === CLARITY: Template structure and appropriate length ===
+    # Well-structured templates (numbered steps, clear sections) get higher scores
+    has_sections = text_lower.count("## ") > 0
+    has_numbered = text_lower.count("1.") > 0 or text_lower.count("1)") > 0
+    has_bullets = text_lower.count("- ") > 0 or text_lower.count("• ") > 0
+    
+    clarity = 5  # Base score
+    if has_sections:
+        clarity += 1
+    if has_numbered:
+        clarity += 1
+    if has_bullets:
+        clarity += 0.5
+    
+    # Template length should be appropriate (not too short)
+    if word_count < 50:
+        clarity -= 1
+    elif word_count > 200:
+        clarity += 0.5
+    
+    # === SPECIFICITY: Template prompts for specific information ===
+    # Does the template ask for concrete details about the missing elements?
+    specificity_prompts = [
+        "who", "what", "when", "where", "why", "how",
+        "input", "output", "format", "example",
+        "audience", "tone", "length", "style",
+        "constraint", "limit", "requirement",
+        "收件人", "语气", "长度", "受众", "背景", "原因"
+    ]
+    prompt_count = sum(1 for p in specificity_prompts if p in text_lower)
+    
+    # Penalize templates with too many generic placeholders
+    generic_ph = text_lower.count("[") + text_lower.count("]")
+    placeholder_ratio = generic_ph / max(word_count, 1)
+    
+    specificity = 4 + min(prompt_count * 0.5, 3)  # Base 4, max 7
+    specificity -= placeholder_ratio * 2  # Penalize dense placeholder use
+    specificity = max(3, min(8, specificity))
+    
+    # === COMPLETENESS: Addresses the detected missing elements ===
+    # Does the template explicitly ask about what the analysis flagged as missing?
     if not missing:
-        completeness = 9
+        completeness = 7  # No missing = good
     else:
         addressed = 0
         for m in missing:
-            m_words = [w for w in m.lower().split() if len(w) > 3]
-            if any(w in text_lower for w in m_words):
-                addressed += 1
-        completeness = min(10, int(10 * addressed / len(missing)) if missing else 10)
+            # Check if template has prompts/questions about this missing element
+            m_words = [w.lower() for w in m.split() if len(w) > 3]
+            for w in m_words:
+                if w in text_lower:
+                    addressed += 0.5
+                    break
+        
+        # Completeness = how well template prompts for the missing info
+        completeness = 3 + min(addressed, len(missing)) * 1.0  # Base 3, max 8
+        completeness = max(3, min(8, completeness))
     
-    # Calculate overall
-    overall = (clarity + specificity + completeness) / 3
+    # === Calculate overall ===
+    overall = clarity * 0.30 + specificity * 0.35 + completeness * 0.35
     
-    # Determine grade
-    if overall >= 8.5:
+    # Grade thresholds - moderate
+    if overall >= 7.5:
         grade = "A"
-    elif overall >= 7:
+    elif overall >= 6:
         grade = "B"
-    elif overall >= 5:
+    elif overall >= 4.5:
         grade = "C"
-    else:
+    elif overall >= 3:
         grade = "D"
+    else:
+        grade = "F"
     
     return {
         "scores": {
-            "clarity": clarity,
-            "specificity": specificity,
-            "completeness": completeness,
+            "clarity": round(clarity, 1),
+            "specificity": round(specificity, 1),
+            "completeness": round(completeness, 1),
         },
         "overall": round(overall, 1),
         "grade": grade,
