@@ -22,6 +22,9 @@ from prompt_autopilot import (
     display_result,
     DisplayStyle,
 )
+from prompt_autopilot.dual_perspective import (
+    dual_perspective_analysis,
+)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -39,6 +42,11 @@ def main():
     # analyze command  
     anal_parser = subparsers.add_parser("analyze", aliases=["a"], help="Analyze an instruction")
     anal_parser.add_argument("instruction", nargs="*", help="Instruction to analyze")
+    
+    # think command - dual perspective analysis
+    think_parser = subparsers.add_parser("think", aliases=["th"], help="Deep dual-perspective analysis")
+    think_parser.add_argument("instruction", nargs="*", help="Instruction to analyze deeply")
+    think_parser.add_argument("--auto", action="store_true", help="Auto-proceed if confident, skip confirmation")
     
     # feedback command
     fb_parser = subparsers.add_parser("feedback", aliases=["f"], help="Record feedback")
@@ -100,6 +108,27 @@ def main():
             print("\n⚠️  Risks:")
             for r in analysis["risks"]:
                 print(f"  - {r}")
+    
+    elif args.command in ("think", "th"):
+        instruction = " ".join(args.instruction) if args.instruction else ""
+        if not instruction:
+            print("Error: instruction required", file=sys.stderr)
+            sys.exit(1)
+        
+        # Run dual perspective analysis
+        result = dual_perspective_analysis(instruction)
+        
+        # Print the analysis
+        print(result.analysis_text)
+        
+        # If confident enough, auto-proceed
+        if args.auto or result.auto_proceed:
+            print("\n✅ 置信度高，直接生成结果...\n")
+            opt_result = optimize(instruction)
+            print(display_result(opt_result, DisplayStyle.MARKDOWN))
+        else:
+            print("\n💬 请确认或补充上述问题后，再运行 optimize")
+            print("   或者加 --auto 参数强制自动生成")
         
     elif args.command in ("feedback", "f"):
         choice_map = {"A": 0, "B": 1, "C": 2}
