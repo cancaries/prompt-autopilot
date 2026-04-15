@@ -1,60 +1,84 @@
-# Test Results
+# Test Results - 2026-04-16 00:07 (Asia/Shanghai)
 
-## 2026-04-15 - Initial Testing
-
-### Tests Run (17 cases)
-
-| Test | Instruction | Type | Version | Score | Status |
-|------|-------------|------|---------|-------|--------|
-| T1 | 写一个Python函数计算斐波那契数列 | code | C | 5.7 | ✅ |
-| T2 | fix the bug in my code | code | C | 9.7 | ⚠️ Score too high |
-| T3 | write a blog post about AI | writing | B | 4.1 | ✅ |
-| T4 | 帮我写一封道歉邮件 | writing | B | 4.9 | ✅ |
-| T5 | 解释什么是量子纠缠 | explanation | B | 4.9 | ✅ |
-| T6 | 帮我写一个排序算法 | code | C | 5.7 | ✅ |
-| T7 | explain how blockchain works | explanation | B | 5.5 | ✅ |
-| T8 | 请帮我写一个 function 处理 user data | code | C | 5.7 | ✅ |
-| T9 | 写代码 | code | C | 5.7 | ✅ |
-| T10 | 写一个Python函数处理JSON数据 | code | C | 5.7 | ✅ |
-| T11 | 用Python实现快速排序 | code | C | 5.7 | ✅ |
-| T12 | 用Python实现一个LRU缓存 | code | C | 5.7 | ✅ |
-| T13 | 写一段科幻小说开头设定在22世纪火星城市 | writing | B | 4.9 | ✅ |
-| T14 | 解释机器学习 | explanation | B | 4.9 | ✅ |
-| T15 | 做好这个功能 | general | C | 3.7 | ✅ |
-| T16 | AI | general | C | 6.5 | ✅ |
-| T17 | 给初级工程师解释什么是闭包 | explanation | B | 4.9 | ✅ |
-| T18 | review这段React代码的性能问题 | code | C | 5.7 | ✅ |
-
-### Summary
-
-- **Total**: 17 tests
-- **Pass**: 16
-- **Fail**: 0
-- **Warnings**: 1 (score inflation for "fix the bug")
-
-### Issues Found
-
-1. **Score Inflation** (T2): "fix the bug in my code" scored 9.7/10 - too high for a brief instruction with placeholder templates. The scoring evaluates template structure, not instruction quality.
-
-### Fixes Applied
-
-- ✅ Fix duplicate prefixes in Chinese explanation templates
-- ✅ Add more Chinese code keywords (排序, 算法, 缓存, etc.)
-- ✅ Fix misdetection of "排序算法" as writing instead of code
-- ✅ Fix recommendation logic: writing tasks now ALWAYS use Version B
-
-### Known Limitations
-
-- Scores can be inflated when templates are well-structured but still contain placeholders
-- Very short instructions (<3 words) have poor analysis
-- Some technical terms may not be detected correctly
+## Syntax Fix Applied
+- Removed orphaned module-level code at lines 315-351 in `src/prompt_autopilot/core.py`
+- Committed: `37e3b46 Fix: Remove orphaned module-level code causing SyntaxError`
+- CHANGELOG updated
 
 ---
 
-## Iteration Log
+## Test Summary (28 cases)
 
-### v1.0.0 → v1.0.1
-- Fix duplicate prefixes
-- Fix instruction type detection
-- Fix recommendation logic
-- Add 28-case test plan
+### ✅ WORKING (2 cases)
+| # | Prompt | Status | Notes |
+|---|--------|--------|-------|
+| T6 | 帮我写一个排序算法 | ✅ Pass | Returns actual working code |
+| T12 | 用Python实现快速排序 | ✅ Pass | Returns actual working quicksort |
+
+### ⚠️ MAJOR QUALITY ISSUES (26 cases)
+
+#### Category 1: Placeholder Output (Garbage Function Names)
+These return `def <garbage_name>(): pass` instead of actual code:
+- T1: 写一个Python函数计算斐波那契数列 → function name is "Python函数计算斐波那契数列"
+- T8: 请帮我写一个 function 处理 user data → function name is "请function处理userdata"
+- T10: 写一个Python函数处理JSON数据 → function name is "Python函数处理JSON数据"
+- T11: 写一个Python函数接收JSON数组返回平均值保留2位小数 → function name is "Python函数接收JSON数组返回平均值保留2位小数"
+- T13: 用Python实现一个LRU缓存 → placeholder
+- T19: 优化这段SQL → function name is "优化这段SQL"
+- T23: 用Python实现输入列表输出平方 → function name is "用Python实现输入列表输出平方"
+- T27: review这段React代码的性能问题 → function name is "review这段React代码的性能问题"
+
+#### Category 2: Wrong Template Type (Content Mismatch)
+- T3: 帮我写一封道歉邮件 → Returns "道歉邮件模板" ✅ Actually works for apology email
+- T14: 写一封拒绝面试者的邮件语气专业友善 → Returns "道歉邮件模板" ❌ Should be rejection letter, not apology
+- T17: 解释机器学习 → Returns content about "AI是什么" ❌ Topic mismatch
+
+#### Category 3: Template with Placeholders Instead of Real Content
+- T4: write a blog post about AI → Returns outline template with [Opening], [Content] placeholders
+- T7: explain how blockchain works → Returns outline with [Your definition] placeholders
+- T15: 写一段科幻小说开头设定在22世纪火星城市 → Returns outline template, not actual fiction
+- T16: 写文献综述摘要关于深度学习在医学影像的应用 → Returns outline template, not actual content
+- T18: 写单元测试 → Returns outline template with placeholders
+- T22: 帮我写一个🎮游戏脚本 → Returns outline template
+
+#### Category 4: Broken Context Filling
+- T24: 给初级工程师解释什么是闭包 → Output contains "给初级工程师闭包是一种[你的理解/定义]" ❌ The prompt is incorrectly inserted into the template
+
+#### Category 5: Garbage/Vague Output
+- T2: fix the bug in my code → Returns placeholder
+- T9: 写代码 → Returns placeholder
+- T20: 做好这个功能 → Returns "**直接回答**：做好这个功能\n\n[基于指令生成的具体内容]"
+- T21: AI → Returns garbage
+- T25: 给团队发一封关于项目延期的通知 → Returns garbage
+- T26: 回复客户投诉订单延迟了5天 → Returns garbage
+
+### Scoring Issues
+- All cases show Score: 9.0/10 (A) even when output is garbage - scoring is not discriminative
+- The system consistently recommends Version A (Direct) regardless of quality
+
+---
+
+## Root Cause Analysis
+
+The `generate_direct_code` function has specific handlers for:
+- Sorting (快排, 排序, quicksort, mergesort) ✅ Works
+- Login (登录, login) ✅ Works  
+- API (api, 接口) ✅ Works
+
+But it falls through to "Generic" for everything else, which just returns:
+```python
+def {func_name}():
+    pass
+```
+Where `func_name` is derived from the prompt by removing common words, leaving garbage.
+
+The system needs:
+1. More specific handlers (fibonacci, LRU, JSON processing, etc.)
+2. OR actual prompt completion using AI (not template-based)
+3. Better scoring that penalizes placeholder output
+
+---
+
+## Status: 🔴 26/28 tests FAIL (quality)
+
+The CLI works after syntax fix, but output quality is severely degraded.
