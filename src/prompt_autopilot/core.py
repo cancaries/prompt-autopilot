@@ -648,15 +648,19 @@ def recommend_version(evaluations: list[EvaluationResult], analysis: AnalysisRes
             best_idx = i
     
     # Adjust based on instruction type
-    # Code tasks -> prefer structured (C)
-    # Writing -> prefer detailed (B)  
-    # Questions -> can be concise (A)
+    # Code tasks -> prefer structured (C) if within 0.5
+    # Writing -> ALWAYS prefer detailed (B), structured is wrong format for prose
+    # Questions/Explanation -> prefer detailed (B) if within 1.0
     instr_type = analysis.get("instruction_type", "general")
     
     if instr_type == "code" and evaluations[2]["overall"] >= evaluations[best_idx]["overall"] - 0.5:
         best_idx = 2  # Structured for code
-    elif instr_type == "writing" and evaluations[1]["overall"] >= evaluations[best_idx]["overall"] - 0.5:
+    elif instr_type == "writing":
+        # Writing tasks should ALWAYS use detailed format (B)
+        # Structured format is completely wrong for blog posts, emails, articles
         best_idx = 1  # Detailed for writing
+    elif instr_type == "explanation" and evaluations[1]["overall"] >= evaluations[best_idx]["overall"] - 1.0:
+        best_idx = 1  # Detailed for explanation
     
     return best_idx
 
