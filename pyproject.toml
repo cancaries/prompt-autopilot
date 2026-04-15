@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prompt-autopilot"
+version = "1.0.0"
+description = "Auto-optimize prompts, evaluate quality, learn preferences"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+keywords = ["prompt", "llm", "gpt", "claude", "openai", "cursor", "ai-tools"]
+authors = [
+    { name = "AI Assistant" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "black", "ruff"]
+
+[project.scripts]
+prompt-autopilot = "prompt_autopilot.cli:main"
+pma = "prompt_autopilot.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/prompt_autopilot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
