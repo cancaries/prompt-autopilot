@@ -39,6 +39,8 @@ class AnalysisResult(TypedDict):
     assumptions: list[str]
     risks: list[str]
     word_count: int
+    instruction_type: str  # code, writing, explanation, question, etc.
+    language: str  # zh, en, or mixed
 
 class VersionResult(TypedDict):
     type: str
@@ -79,17 +81,51 @@ def save_preferences(prefs: dict):
 # Analysis
 # =============================================================================
 
+def detect_language(text: str) -> str:
+    """Detect if instruction is primarily Chinese, English, or mixed."""
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    english_words = len([w for w in text.split() if w.isascii()])
+    
+    if chinese_chars > english_words * 1.5:
+        return "zh"
+    elif english_words > chinese_chars * 1.5:
+        return "en"
+    return "mixed"
+
+def detect_instruction_type(instruction: str) -> str:
+    """Detect what type of instruction this is."""
+    instruction_lower = instruction.lower()
+    
+    # Code-related
+    if any(word in instruction_lower for word in ["code", "function", "script", "implement", "debug", "fix", "refactor", "api", "database", "sql", "python", "javascript", "写代码", "函数", "调试"]):
+        return "code"
+    
+    # Writing
+    if any(word in instruction_lower for word in ["write", "compose", "draft", "email", "letter", "article", "blog", "写", "文章", "邮件", "文案"]):
+        return "writing"
+    
+    # Explanation
+    if any(word in instruction_lower for word in ["explain", "what", "how", "why", "difference", "解释", "说明", "什么是", "为什么"]):
+        return "explanation"
+    
+    # Question
+    if instruction.strip().endswith("?") or "吗" in instruction or "?" in instruction:
+        return "question"
+    
+    # Data processing
+    if any(word in instruction_lower for word in ["process", "analyze", "data", "csv", "json", "parse", "处理", "分析", "数据"]):
+        return "data"
+    
+    return "general"
+
 def analyze_instruction(instruction: str) -> AnalysisResult:
     """
     Analyze a raw instruction for missing information, ambiguity, etc.
-    
-    Identifies:
-    - Missing context or constraints
-    - Unstated assumptions
-    - Potential failure modes
     """
     instruction_lower = instruction.lower()
     words = instruction_lower.split()
+    lang = detect_language(instruction)
+    instr_type = detect_instruction_type(instruction)
     
     missing = []
     assumptions = []
@@ -100,116 +136,427 @@ def analyze_instruction(instruction: str) -> AnalysisResult:
         missing.append("Very brief - may lack necessary context")
     
     # No output format
-    format_indicators = ["format", "output", "return", "give", "show", "list", "explain", "write"]
+    format_indicators = ["format", "output", "return", "give", "show", "list", "explain", "write", "生成", "输出", "返回", "解释", "写"]
     if not any(word in instruction_lower for word in format_indicators):
         missing.append("No output format specified")
     
     # No constraints
-    constraint_words = ["must", "should", "only", "don't", "avoid", "limit", "exactly", "under"]
+    constraint_words = ["must", "should", "only", "don't", "avoid", "limit", "exactly", "under", "必须", "应该", "不要", "避免", "限制"]
     if not any(word in instruction_lower for word in constraint_words):
         missing.append("No constraints or limitations stated")
     
-    # No audience
-    audience_words = ["for", "audience", "beginner", "expert", "technical", "someone", "who"]
-    if not any(word in instruction_lower for word in audience_words):
+    # No audience (only for non-code tasks)
+    audience_words = ["for", "audience", "beginner", "expert", "technical", "someone", "who", "给", "面向", "受众"]
+    if instr_type != "code" and not any(word in instruction_lower for word in audience_words):
         missing.append("Target audience not specified")
     
-    # No language/tool specified for technical tasks
-    if any(word in instruction_lower for word in ["code", "function", "script", "api", "database"]):
-        tech_lang = ["python", "javascript", "typescript", "java", "go", "rust", "sql", "bash"]
-        if not any(word in instruction_lower for word in tech_lang):
-            assumptions.append("No language/framework specified")
+    # Language/tool specific (code tasks)
+    if instr_type == "code":
+        tech_langs = ["python", "javascript", "typescript", "java", "go", "rust", "sql", "bash", "c++", "ruby", "php", "python", "js", "ts", "代码", "语言"]
+        if not any(word in instruction_lower for word in tech_langs):
+            assumptions.append("No programming language specified")
+        
+        if "function" in instruction_lower or "函数" in instruction_lower:
+            if "input" not in instruction_lower and "参数" not in instruction_lower:
+                missing.append("No input/parameter specification")
+            if "output" not in instruction_lower and "返回" not in instruction_lower:
+                missing.append("No output specification")
     
-    # Question without context
+    # Writing tasks
+    if instr_type == "writing":
+        writing_elements = ["收件人", "收件", "语气", "正式", "口语", "长度", "字数", "recipient", "tone", "length", "formal", "casual"]
+        if not any(word in instruction_lower for word in writing_elements):
+            missing.append("No writing style/length specified")
+    
+    # Question tasks
+    if instr_type == "question":
+        if len(words) < 10:
+            missing.append("Question too brief - may get generic answer")
+        if "level" not in instruction_lower and "程度" not in instruction_lower:
+            assumptions.append("Assumed general knowledge level")
+    
+    # Data tasks
+    if instr_type == "data":
+        if "input" not in instruction_lower and "format" not in instruction_lower:
+            missing.append("No input data format specified")
+    
+    # Risks
     if "?" in instruction and len(words) < 15:
         risks.append("Question without context - may get generic answers")
     
-    # Incomplete instruction
     if instruction.endswith("..."):
         risks.append("Incomplete instruction - may be cut off")
-    
-    # Assumptions about task type
-    if "fix" in instruction_lower or "debug" in instruction_lower:
-        assumptions.append("No specific error message or location provided")
     
     return {
         "missing": missing,
         "assumptions": assumptions,
         "risks": risks,
         "word_count": len(words),
+        "instruction_type": instr_type,
+        "language": lang,
     }
 
 # =============================================================================
-# Version Generation
+# Smart Version Generation
 # =============================================================================
+
+def generate_context_fillers(analysis: AnalysisResult, instruction: str) -> dict:
+    """Generate specific context fillers based on analysis."""
+    instr_type = analysis["instruction_type"]
+    lang = analysis["language"]
+    missing = analysis["missing"]
+    
+    fillers = {}
+    
+    if lang == "zh":
+        if instr_type == "code":
+            fillers = {
+                "input_spec": "输入格式：JSON / 列表 / 字典等",
+                "output_spec": "输出格式：返回值类型和内容",
+                "error_handling": "错误处理：异常情况如何处理",
+                "example": "示例：输入 → 输出",
+            }
+        elif instr_type == "writing":
+            fillers = {
+                "recipient": "谁？（同事/客户/朋友）",
+                "reason": "发生了什么？",
+                "relationship": "亲密/一般/正式",
+                "tone": "真诚/正式/轻松",
+                "length": "多少字？",
+            }
+        elif instr_type == "explanation":
+            fillers = {
+                "audience": "受众：谁？（初学者/学生/专业人士）",
+                "level": "理解程度：小白/有基础/专家",
+                "depth": "深度：简单概念/详细解释/技术细节",
+                "format": "格式：口语/书面/带例子",
+            }
+        else:
+            fillers = {
+                "context": "背景：什么场景？",
+                "constraints": "约束：有哪些限制？",
+                "goal": "目标：想达到什么效果？",
+            }
+    else:  # English or mixed
+        if instr_type == "code":
+            fillers = {
+                "input_spec": "Input format: JSON / list / dict / etc.",
+                "output_spec": "Output: return type and content",
+                "error_handling": "Error handling: how to handle exceptions",
+                "example": "Example: input → output",
+            }
+        elif instr_type == "writing":
+            fillers = {
+                "recipient": "Recipient: who? (colleague/client/friend)",
+                "reason": "Reason: what happened?",
+                "relationship": "Relationship: close/casual/formal",
+                "tone": "Tone: sincere/formal/casual",
+                "length": "Length: how many words?",
+            }
+        elif instr_type == "explanation":
+            fillers = {
+                "audience": "who? (beginner/student/expert)",
+                "level": "basic/intermediate/advanced",
+                "depth": "concept/explanation/technical",
+                "format": "spoken/written/with examples",
+            }
+        else:
+            fillers = {
+                "context": "Context: what setting?",
+                "constraints": "Constraints: any limitations?",
+                "goal": "Goal: what to achieve?",
+            }
+    
+    return fillers
 
 def generate_optimized_versions(instruction: str, count: int = 3) -> list[VersionResult]:
     """
-    Generate 3 optimized versions of the instruction:
-    - A: Concise (direct, minimal)
-    - B: Detailed (full context, examples)
-    - C: Structured (step-by-step, numbered)
+    Generate 3 optimized versions with context-aware placeholders.
     """
+    # First analyze to understand the instruction
+    analysis = analyze_instruction(instruction)
+    fillers = generate_context_fillers(analysis, instruction)
+    instr_type = analysis["instruction_type"]
+    lang = analysis["language"]
     stripped = instruction.strip()
     
-    versions: list[VersionResult] = []
+    versions = []
     
-    # Version A: Concise
+    # Version A: Concise (minimal but useful)
+    if lang == "zh":
+        version_a = f"""{stripped}
+
+要求：
+- 语言简洁，不要废话
+- 直接给出结果"""
+    else:
+        version_a = f"""{stripped}
+
+Requirements:
+- Be concise and direct
+- No preamble, just the answer"""
+    
     versions.append({
         "type": "A (Concise)",
         "description": "Direct, minimal context, no fluff",
-        "template": f"""{stripped}
-
-Requirements:
-- Be direct and concise
-- No preamble or explanation
-- Output only what's asked"""
+        "template": version_a,
     })
     
-    # Version B: Detailed
-    versions.append({
-        "type": "B (Detailed)",
-        "description": "Full context, examples, clear constraints",
-        "template": f"""Task: {stripped}
+    # Version B: Detailed (context-aware)
+    if instr_type == "code":
+        if lang == "zh":
+            version_b = f"""任务：{stripped}
+
+输入规范：
+{fillers.get('input_spec', '[输入格式]')}
+
+输出规范：
+{fillers.get('output_spec', '[输出格式]')}
+
+约束条件：
+- {fillers.get('error_handling', '[错误处理方式]')}
+- 运行效率要求（如有）
+
+示例：
+{fillers.get('example', '[输入 → 输出 示例]')}"""
+        else:
+            version_b = f"""Task: {stripped}
+
+Input Specification:
+{fillers.get('input_spec', '[Input format]')}
+
+Output Specification:
+{fillers.get('output_spec', '[Output format]')}
+
+Constraints:
+- {fillers.get('error_handling', '[Error handling]')}
+- Performance requirements (if any)
+
+Example:
+{fillers.get('example', '[input → output example]')}"""
+    elif instr_type == "writing":
+        if lang == "zh":
+            version_b = f"""任务：{stripped}
+
+背景信息：
+- {fillers.get('recipient', '[收件人]')}
+- {fillers.get('reason', '[道歉原因]')}
+- {fillers.get('relationship', '[关系]')}
+
+写作要求：
+- 语气：{fillers.get('tone', '[真诚/正式/轻松]')}
+- 长度：{fillers.get('length', '[字数要求]')}
+- 格式：邮件/私信/正式信函
+
+预期输出：
+完整通顺的文本内容"""
+        else:
+            version_b = f"""Task: {stripped}
 
 Context:
-[Explain the background or situation]
+- {fillers.get('recipient', '[Recipient]')}
+- {fillers.get('reason', '[Reason]')}
+- {fillers.get('relationship', '[Relationship]')}
 
 Requirements:
-- [Specific requirement 1]
-- [Specific requirement 2]
-- [Format specification if needed]
-
-Examples:
-- [Example 1] → [Expected output]
-- [Example 2] → [Expected output]
+- Tone: {fillers.get('tone', '[sincere/formal/casual]')}
+- Length: {fillers.get('length', '[word count]')}
+- Format: {fillers.get('format', '[email/message/formal letter]')}
 
 Expected Output:
-[Describe what success looks like]"""
+Complete, well-written text"""
+    elif instr_type == "explanation":
+        if lang == "zh":
+            version_b = f"""任务：{stripped}
+
+受众信息：
+- {fillers.get('audience', '[目标读者]')}
+- {fillers.get('level', '[知识水平]')}
+
+解释要求：
+- 深度：{fillers.get('depth', '[简单/详细/技术]')}
+- 格式：{fillers.get('format', '[口语/书面/带例子]')}
+- 是否需要图示或代码示例？
+
+预期输出：
+清晰易懂的解释内容"""
+        else:
+            version_b = f"""Task: {stripped}
+
+Audience:
+- {fillers.get('audience', '[Target reader]')}
+- {fillers.get('level', '[Knowledge level]')}
+
+Requirements:
+- Depth: {fillers.get('depth', '[simple/detailed/technical]')}
+- Format: {fillers.get('format', '[oral/written/with examples]')}
+- Include diagrams or code examples if helpful?
+
+Expected Output:
+Clear and understandable explanation"""
+    else:
+        if lang == "zh":
+            version_b = f"""任务：{stripped}
+
+背景：
+{fillers.get('context', '[背景信息]')}
+
+约束：
+{fillers.get('constraints', '[限制条件]')}
+
+目标：
+{fillers.get('goal', '[预期结果]')}
+
+请按要求完成。"""
+        else:
+            version_b = f"""Task: {stripped}
+
+Context:
+{fillers.get('context', '[Background]')}
+
+Constraints:
+{fillers.get('constraints', '[Limitations]')}
+
+Goal:
+{fillers.get('goal', '[Expected outcome]')}
+
+Please complete as requested."""
+    
+    versions.append({
+        "type": "B (Detailed)",
+        "description": "Full context, specific placeholders, clear constraints",
+        "template": version_b,
     })
     
-    # Version C: Structured
-    versions.append({
-        "type": "C (Structured)",
-        "description": "Step-by-step, numbered, clear I/O",
-        "template": f"""## Task
+    # Version C: Structured (step-by-step)
+    if instr_type == "code":
+        if lang == "zh":
+            version_c = f"""## 任务
+{stripped}
+
+## 输入
+{fillers.get('input_spec', '[输入数据]')}
+
+## 输出  
+{fillers.get('output_spec', '[输出数据]')}
+
+## 约束
+- {fillers.get('error_handling', '[错误处理]')}
+- 时间/空间复杂度（如有要求）
+
+## 实现步骤
+1. [步骤1]
+2. [步骤2]
+3. [步骤3]
+
+## 验收标准
+- [标准1]
+- [标准2]"""
+        else:
+            version_c = f"""## Task
 {stripped}
 
 ## Input
-[What I will provide]
+{fillers.get('input_spec', '[Input data]')}
+
+## Output
+{fillers.get('output_spec', '[Output data]')}
 
 ## Constraints
-- [Limitation 1]
-- [Limitation 2]
+- {fillers.get('error_handling', '[Error handling]')}
+- Time/space complexity (if required)
 
-## Output Format
-```[json/yaml/markdown/code]
-[Format specification]
-```
+## Implementation Steps
+1. [Step 1]
+2. [Step 2]
+3. [Step 3]
 
-## Success Criteria
+## Acceptance Criteria
 - [Criterion 1]
 - [Criterion 2]"""
+    elif instr_type == "writing":
+        if lang == "zh":
+            version_c = f"""## 写作任务
+{stripped}
+
+## 基本信息
+- 收件人：{fillers.get('recipient', '[谁]')}
+- 场合：{fillers.get('context', '[什么场景]')}
+
+## 风格要求
+- 语气：{fillers.get('tone', '[语气]')}
+- 长度：{fillers.get('length', '[字数]')}
+- 格式：{fillers.get('format', '[格式]')}
+
+## 内容要点
+1. [要点1]
+2. [要点2]
+3. [要点3]
+
+## 结尾
+- [如何收尾]"""
+        else:
+            version_c = f"""## Writing Task
+{stripped}
+
+## Basic Info
+- Recipient: {fillers.get('recipient', '[who]')}
+- Occasion: {fillers.get('context', '[what occasion]')}
+
+## Style
+- Tone: {fillers.get('tone', '[tone]')}
+- Length: {fillers.get('length', '[length]')}
+- Format: {fillers.get('format', '[format]')}
+
+## Key Points
+1. [Point 1]
+2. [Point 2]
+3. [Point 3]
+
+## Closing
+- [How to end]"""
+    else:
+        if lang == "zh":
+            version_c = f"""## 任务
+{stripped}
+
+## 背景
+{fillers.get('context', '[背景信息]')}
+
+## 约束条件
+- {fillers.get('constraints', '[限制]')}
+
+## 执行步骤
+1. [第一步]
+2. [第二步]
+3. [第三步]
+
+## 交付标准
+- [标准1]
+- [标准2]"""
+        else:
+            version_c = f"""## Task
+{stripped}
+
+## Background
+{fillers.get('context', '[Background]')}
+
+## Constraints
+- {fillers.get('constraints', '[Constraints]')}
+
+## Steps
+1. [Step 1]
+2. [Step 2]
+3. [Step 3]
+
+## Deliverables
+- [Criterion 1]
+- [Criterion 2]"""
+    
+    versions.append({
+        "type": "C (Structured)",
+        "description": "Step-by-step, numbered, clear I/O",
+        "template": version_c,
     })
     
     return versions[:count]
@@ -221,29 +568,29 @@ Expected Output:
 def evaluate_version(version_text: str, analysis: AnalysisResult) -> EvaluationResult:
     """
     Evaluate a version on clarity, specificity, and completeness.
-    Scores 1-10 for each dimension.
     """
     word_count = len(version_text.split())
     text_lower = version_text.lower()
     
     # Clarity: appropriate length, clear structure
-    if word_count < 10:
-        clarity = 5  # Too brief
-    elif word_count < 30:
+    if word_count < 15:
+        clarity = 5
+    elif word_count < 40:
         clarity = 7
-    elif word_count < 80:
-        clarity = 9  # Good balance
-    elif word_count < 150:
+    elif word_count < 100:
+        clarity = 9
+    elif word_count < 200:
         clarity = 8
     else:
-        clarity = 7  # Getting verbose
+        clarity = 7
     
     # Specificity: has concrete requirements
     specificity_keywords = [
         "specific", "exactly", "must", "should", "format", "example",
-        "json", "list", "step", "constraint", "limitation"
+        "json", "list", "step", "constraint", "limitation",
+        "输入", "输出", "格式", "要求", "规范"
     ]
-    specificity = min(10, 4 + sum(1 for kw in specificity_keywords if kw in text_lower) * 1.5)
+    specificity = min(10, 4 + sum(1 for kw in specificity_keywords if kw in text_lower) * 1.2)
     
     # Completeness: addresses missing elements from analysis
     missing = analysis.get("missing", [])
@@ -252,9 +599,8 @@ def evaluate_version(version_text: str, analysis: AnalysisResult) -> EvaluationR
     else:
         addressed = 0
         for m in missing:
-            m_words = m.lower().split()
-            # Check if any significant word from missing item appears in version
-            if any(w in text_lower for w in m_words if len(w) > 4):
+            m_words = [w for w in m.lower().split() if len(w) > 3]
+            if any(w in text_lower for w in m_words):
                 addressed += 1
         completeness = min(10, int(10 * addressed / len(missing)) if missing else 10)
     
@@ -281,8 +627,11 @@ def evaluate_version(version_text: str, analysis: AnalysisResult) -> EvaluationR
         "grade": grade,
     }
 
-def recommend_version(evaluations: list[EvaluationResult]) -> int:
-    """Return index of best version based on evaluations."""
+def recommend_version(evaluations: list[EvaluationResult], analysis: AnalysisResult) -> int:
+    """
+    Recommend the best version based on evaluations and instruction type.
+    """
+    # First pick the highest scored
     best_idx = 0
     best_score = 0
     
@@ -290,6 +639,17 @@ def recommend_version(evaluations: list[EvaluationResult]) -> int:
         if eval_result["overall"] > best_score:
             best_score = eval_result["overall"]
             best_idx = i
+    
+    # Adjust based on instruction type
+    # Code tasks -> prefer structured (C)
+    # Writing -> prefer detailed (B)  
+    # Questions -> can be concise (A)
+    instr_type = analysis.get("instruction_type", "general")
+    
+    if instr_type == "code" and evaluations[2]["overall"] >= evaluations[best_idx]["overall"] - 0.5:
+        best_idx = 2  # Structured for code
+    elif instr_type == "writing" and evaluations[1]["overall"] >= evaluations[best_idx]["overall"] - 0.5:
+        best_idx = 1  # Detailed for writing
     
     return best_idx
 
@@ -300,24 +660,18 @@ def recommend_version(evaluations: list[EvaluationResult]) -> int:
 def optimize(instruction: str) -> OptimizationResult:
     """
     Main optimization pipeline.
-    
-    Args:
-        instruction: The raw instruction to optimize
-    
-    Returns:
-        OptimizationResult with all versions, evaluations, and recommendation
     """
     # Step 1: Analyze
     analysis = analyze_instruction(instruction)
     
-    # Step 2: Generate versions
+    # Step 2: Generate versions (with smart context)
     versions = generate_optimized_versions(instruction)
     
     # Step 3: Evaluate each
     evaluations = [evaluate_version(v["template"], analysis) for v in versions]
     
-    # Step 4: Recommend
-    recommended_idx = recommend_version(evaluations)
+    # Step 4: Recommend (considering instruction type)
+    recommended_idx = recommend_version(evaluations, analysis)
     
     return {
         "original": instruction,
@@ -341,21 +695,12 @@ def record_feedback(
 ) -> dict:
     """
     Record user feedback to improve future recommendations.
-    
-    Args:
-        instruction: Original instruction
-        chosen_idx: Which version was chosen (0=A, 1=B, 2=C)
-        feedback: Free-text feedback
-        improvement: What could be improved
-    
-    Returns:
-        Updated preferences
     """
     prefs = load_preferences()
     
     entry = {
         "timestamp": datetime.now().isoformat(),
-        "instruction": instruction[:100],  # Truncate long instructions
+        "instruction": instruction[:100],
         "chosen_version": ["A", "B", "C"][chosen_idx],
         "feedback": feedback,
         "improvement": improvement,
@@ -366,19 +711,12 @@ def record_feedback(
     # Extract patterns from feedback
     if improvement:
         imp_lower = improvement.lower()
-        if "concise" in imp_lower or "shorter" in imp_lower or "brief" in imp_lower:
+        if any(word in imp_lower for word in ["concise", "shorter", "brief", "简洁"]):
             prefs["format_preference"] = "concise"
-        elif "detail" in imp_lower or "more" in imp_lower or "explain" in imp_lower:
+        elif any(word in imp_lower for word in ["detail", "more", "explain", "详细"]):
             prefs["format_preference"] = "detailed"
-        elif "step" in imp_lower or "structur" in imp_lower:
+        elif any(word in imp_lower for word in ["step", "structur", "结构"]):
             prefs["format_preference"] = "structured"
-    
-    # Extract commonly missing elements
-    analysis = analyze_instruction(instruction)
-    for m in analysis.get("missing", []):
-        m_key = m.split()[0]  # First significant word
-        if m_key not in prefs.get("common_missing", []):
-            prefs.setdefault("common_missing", []).append(m_key)
     
     save_preferences(prefs)
     return prefs
@@ -387,7 +725,7 @@ def record_feedback(
 # Template Management
 # =============================================================================
 
-TemplateData = dict  # Simplified for now
+TemplateData = dict
 
 def save_template(
     name: str,
