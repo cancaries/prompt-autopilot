@@ -50,6 +50,40 @@ pma optimize "写排序算法"   # Smart optimization
 
 ---
 
+## 🔐 API Key Configuration (Optional)
+
+For enhanced LLM-powered optimization, configure your API key securely:
+
+```bash
+# Method 1: Environment variables (recommended)
+export PROMPT_AUTOPILOT_API_KEY="sk-..."
+export PROMPT_AUTOPILOT_MODEL="gpt-4"
+export PROMPT_AUTOPILOT_ENDPOINT="https://api.openai.com/v1/chat/completions"
+
+# Then use --use-llm flag
+prompt-autopilot optimize "做个登录功能" --use-llm
+prompt-autopilot think "帮我写排序算法" --use-llm
+```
+
+```bash
+# Method 2: Local config file (not committed to git)
+# File: ~/.prompt-autopilot/config.json
+{
+  "llm_api_key": "sk-...",
+  "llm_model": "gpt-4",
+  "llm_endpoint": "https://api.openai.com/v1/chat/completions"
+}
+
+# Then use --use-llm flag
+prompt-autopilot optimize "做个登录功能" --use-llm
+```
+
+**Priority**: Environment variables > Config file > Defaults
+
+> ⚠️ **Security**: API keys are never committed to git. The `config.json` file and `.env` are in `.gitignore`.
+
+---
+
 ## ⭐ Features
 
 - 🧠 **think** — Dual perspective analysis (engineer + product)
@@ -57,6 +91,7 @@ pma optimize "写排序算法"   # Smart optimization
 - 📊 **analyze** — Quick gap detection
 - 🎯 **No API Key needed** — Built-in smart inference engine
 - 🔧 **Category-aware** — Code, writing, explanation, Q&A
+- 🔐 **Secure** — API key via env vars or local config, never in git
 
 ---
 

@@ -35,103 +35,126 @@ DEFAULT_PREFERENCES = {
 # Category-Specific Generation Prompt Templates
 # =============================================================================
 
-CODE_GENERATION_PROMPT = '''你是编程专家，擅长生成高质量的编程指令。
+# =============================================================================
+# LLM-Enhanced Prompt Generation Prompts
+# =============================================================================
 
-【用户需求】
+PROMPT_GENERATION_SYSTEM = '''你是一个专业的 prompt 工程专家，擅长将模糊的用户需求转化为完整、精确的 prompt。
+
+你的工作哲学：
+- 不要问用户问题，直接推理并填充合理的默认值
+- 宁可多做，不要少做
+- 用户说"做个登录功能"，你要想到：注册、密码找回、第三方登录、JWT、数据库、安全...
+- 深度推理比规则匹配好 100 倍'''
+
+CODE_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
+
 {instruction}
 
-【判断标准】
-差 prompt："写个排序算法" → 太模糊，缺少上下文
-好 prompt："用 Python 实现快速排序，支持自定义比较函数，用于处理大量金融数据"
+请深度思考并生成：
 
-【必须包含的要素】（全部需要）
-□ 编程语言/框架（必须明确，如 Python/JavaScript/Go）
-□ 输入规格（输入是什么？类型、格式、范围）
-□ 输出规格（输出是什么？类型、格式、示例）
-□ 核心逻辑要求（算法、数据结构、架构设计）
-□ 边界情况处理（空输入、异常值、大规模数据）
-□ 性能要求（时间/空间复杂度，如有）
-□ 安全要求（如有：输入校验、SQL注入防护等）
+1. 【意图理解】用户真正想要的是什么？不是字面，而是背后目的。"做个登录功能" 背后可能是：一个需要用户认证的系统，可能是 Web/APP/后端服务的一部分。
 
-【禁止出现】
-× "写个XX功能" → 必须改为 "用X语言实现X，支持X场景"
-× 模糊的约束条件 → 必须量化（如 "支持100万条数据"）
-× 缺少错误处理的设计
+2. 【盲点发现】用户没想到但很重要的东西有哪些？
+   例如：
+   - "做个登录" → 可能需要：注册功能、密码找回、第三方登录（微信/Google）、会话管理、JWT/ Session、数据库设计、密码加密（bcrypt）、防暴力破解...
+   - "写个排序" → 可能需要：数据规模、是否需要稳定排序、是否需要自定义比较、空间限制...
 
-【输出格式】
-直接输出优化后的 prompt，包含以上所有要素，用自然段落组织，不要分点列举。'''
+3. 【优化后的 prompt】生成一个完整的、专业的 prompt，包含：
+   - 清晰的任务描述（用一句话描述你要 AI 做什么）
+   - 具体的约束条件（输入/输出/性能/安全等）
+   - 相关的背景信息（项目背景、使用场景、目标用户）
+   - 质量标准（什么样的结果算好）
+   - 边界情况（如何处理异常）
 
-WRITING_GENERATION_PROMPT = '''你是写作专家，擅长生成清晰的写作指令。
+4. 【before/after】给出优化前后的对比
 
-【用户需求】
+直接输出优化后的 prompt 和对比，不要解释你的思考过程。
+用自然段落组织，不要分点列举。'''
+
+WRITING_GENERATION_PROMPT = '''你是一个 prompt 工程专家，擅长生成高质量的写作 prompt。用户想要：
+
 {instruction}
 
-【判断标准】
-差 prompt："写一封邮件" → 缺少对象、目的、语气
-好 prompt："写一封给投资人的项目进展邮件，汇报Q3业绩未达标，说明原因并提出下季度改进措施，语气专业但坦诚"
+请深度思考并生成：
 
-【必须包含的要素】（全部需要）
-□ 受众是谁（投资人/客户/同事/上级？年龄/职位/背景）
-□ 写作目的（汇报/说服/道歉/通知/解释？）
-□ 核心信息（必须传达的3个要点）
-□ 语气风格（正式/亲切/严肃/轻松？中文还是英文？）
-□ 结构要求（总分总/清单/书信格式？）
-□ 字数/长度要求（如有）
-□ 禁止事项（不要提到XX，不要用XX语气）
+1. 【意图理解】用户真正想要的是什么？"写一封邮件" 背后可能是：向投资人汇报、和客户沟通、处理投诉、邀请合作...
 
-【禁止出现】
-× "写一封邮件" → 必须改为 "写一封给XX的，关于XX的邮件"
-× 模糊受众 → 必须明确（"技术人员" vs "CEO" 完全不同）
-× 缺少行动指引 → 邮件需要明确期望读者做什么
+2. 【盲点发现】用户没想到但很重要的东西：
+   - 受众是谁？技术人员 vs CEO 完全不同
+   - 期望读者读完做什么？
+   - 语气应该是什么？
 
-【输出格式】
-直接输出优化后的 prompt，自然段落形式。'''
+3. 【优化后的 prompt】生成完整 prompt，包含：
+   - 清晰的任务描述
+   - 具体的受众画像
+   - 核心信息（2-3 个要点）
+   - 语气风格
+   - 结构要求
+   - 字数/长度
+   - 禁止事项
 
-EXPLANATION_GENERATION_PROMPT = '''你是一位老师，擅长用通俗易懂的方式解释复杂概念。
+4. 【before/after】对比
 
-【用户需求】
+直接输出，不要解释。'''
+
+EXPLANATION_GENERATION_PROMPT = '''你是一个 prompt 工程专家，擅长生成高质量的解释 prompt。用户想要：
+
 {instruction}
 
-【判断标准】
-差 prompt："解释一下区块链" → 太宽泛，没有重点
-好 prompt："向没有技术背景的 30-40 岁职场人士解释区块链，用他们熟悉的银行转账做类比，重点讲清去中心化和不可篡改这两个核心特性"
+请深度思考并生成：
 
-【必须包含的要素】（全部需要）
-□ 受众是谁（年龄、教育背景、技术敏感度）
-□ 解释深度（科普/专业/学术？）
-□ 核心概念（1-3个必须讲清楚的概念）
-□ 类比/生活场景（必须有一个身边的例子）
-□ 关键要点（3个以内，读完能记住的）
-□ 常见误解（1-2个，写在最后作为提醒）
+1. 【意图理解】用户想解释什么？给谁听？想达到什么效果？
 
-【禁止出现】
-× "解释XX是什么" → 必须改为 "向XX解释XX，重点是XX"
-× 过多专业术语 → 必须用通俗语言
-× 只讲what不讲why → 要解释原理
+2. 【盲点发现】
+   - 受众的背景是什么？（技术人员/普通用户/小朋友？）
+   - 需要深入到什么程度？
+   - 用户可能有哪些误解？
 
-【输出格式】
-直接输出优化后的 prompt，自然段落形式。'''
+3. 【优化后的 prompt】生成完整 prompt，包含：
+   - 受众画像
+   - 解释深度
+   - 核心概念（1-3 个）
+   - 类比/生活场景
+   - 关键要点
+   - 常见误解提醒
 
-GENERAL_GENERATION_PROMPT = '''你是指令优化专家。用户想要：{instruction}
+4. 【before/after】对比
 
-【判断标准】
-差 prompt："帮我处理这个" → 不知所云
-好 prompt：明确who、what、why、how
+直接输出，不要解释。'''
 
-【必须包含的要素】
-□ 执行者是谁（AI/人类？什么角色？）
-□ 具体要做什么（明确的动作和目标）
-□ 上下文/背景（为什么需要做这件事）
-□ 质量标准（什么样的结果算好？）
-□ 约束条件（不能做什么？有什么限制？）
+GENERAL_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
 
-【禁止出现】
-× 模糊的动作描述 → 必须明确具体
-× 缺少上下文 → 说明为什么需要做这件事
-× 缺少成功标准 → 说明什么样的结果算好
+{instruction}
 
-【输出格式】
-直接输出优化后的 prompt，自然段落形式。'''
+请深度思考并生成：
+
+1. 【意图理解】用户真正想完成的是什么？不是字面，而是背后目的。
+
+2. 【盲点发现】用户没想到但很重要的东西有哪些？
+
+3. 【优化后的 prompt】生成一个完整的、专业的 prompt，包含：
+   - 清晰的任务描述
+   - 具体的约束条件
+   - 相关的背景信息
+   - 质量标准
+
+4. 【before/after】对比
+
+直接输出，不要解释你的思考过程。'''
+
+SELF_REFLECTION_PROMPT = '''你是 prompt-autopilot 的创造者。审视当前系统：
+
+当前系统输出：
+{recent_output}
+
+请深度反思：
+1. 这个输出专业吗？哪里不够好？
+2. 对标 linshenkx/prompt-optimizer，我们差在哪里？
+3. 如果你是用户，你会满意吗？为什么？
+4. 最需要改进的一个点是什么？
+
+诚实、严格地自我批判。直接输出反思结果。'''
 
 # =============================================================================
 # Types
@@ -170,12 +193,36 @@ class OptimizationResult(TypedDict):
 # Preferences
 # =============================================================================
 
-def load_config() -> dict:
-    """Load LLM configuration."""
+def get_llm_config() -> dict:
+    """Get LLM config with priority: env vars > config file > defaults.
+    
+    Environment variables:
+    - PROMPT_AUTOPILOT_API_KEY: LLM API key
+    - PROMPT_AUTOPILOT_MODEL: Model name (default: gpt-4)
+    - PROMPT_AUTOPILOT_ENDPOINT: API endpoint URL
+    """
+    cfg = {}
+    # Load from config file as base (only keys not in env)
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {"llm_api_key": None, "llm_model": "gpt-4", "llm_endpoint": "https://api.openai.com/v1"}
+            cfg = json.load(f)
+    # Environment variables override (highest priority)
+    if os.environ.get("PROMPT_AUTOPILOT_API_KEY"):
+        cfg["llm_api_key"] = os.environ["PROMPT_AUTOPILOT_API_KEY"]
+    if os.environ.get("PROMPT_AUTOPILOT_MODEL"):
+        cfg["llm_model"] = os.environ["PROMPT_AUTOPILOT_MODEL"]
+    if os.environ.get("PROMPT_AUTOPILOT_ENDPOINT"):
+        cfg["llm_endpoint"] = os.environ["PROMPT_AUTOPILOT_ENDPOINT"]
+    # Ensure defaults
+    cfg.setdefault("llm_api_key", None)
+    cfg.setdefault("llm_model", "gpt-4")
+    cfg.setdefault("llm_endpoint", "https://api.openai.com/v1/chat/completions")
+    return cfg
+
+
+def load_config() -> dict:
+    """Load LLM configuration (legacy, wraps get_llm_config)."""
+    return get_llm_config()
 
 def save_config(cfg: dict):
     """Save LLM configuration."""
@@ -1095,25 +1142,20 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
                       endpoint: str = "https://api.openai.com/v1/chat/completions",
                       instruction_type: str = None) -> Optional[str]:
     """
-    Use LLM with category-specific prompt to generate optimized prompt.
-    Requires user to provide their own API key.
-    Falls back to None if API key not provided or call fails.
+    Use LLM with deep reasoning to generate optimized prompt.
+    Uses the LLM-Enhanced prompts for genuine deep reasoning, not template filling.
     """
     if not api_key:
         return None
 
-    # 根据类型选择生成 prompt
+    # Select the right generation prompt based on instruction type
     if instruction_type == "code":
-        system_prompt = "你是一个编程专家，擅长生成高质量的编程指令。"
         user_prompt = CODE_GENERATION_PROMPT.format(instruction=instruction)
     elif instruction_type == "writing":
-        system_prompt = "你是一个写作专家，擅长生成清晰的写作指令。"
         user_prompt = WRITING_GENERATION_PROMPT.format(instruction=instruction)
     elif instruction_type == "explanation":
-        system_prompt = "你是一位老师，擅长用通俗易懂的方式解释复杂概念。"
         user_prompt = EXPLANATION_GENERATION_PROMPT.format(instruction=instruction)
     else:
-        system_prompt = "你是一个指令优化专家。"
         user_prompt = GENERAL_GENERATION_PROMPT.format(instruction=instruction)
 
     try:
@@ -1126,12 +1168,12 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": PROMPT_GENERATION_SYSTEM},
                     {"role": "user", "content": user_prompt},
                 ],
-                "temperature": 0.7,
+                "temperature": 0.8,  # Higher temp for creative reasoning
             },
-            timeout=30,
+            timeout=60,  # Longer timeout for deep reasoning
         )
         response.raise_for_status()
         result = response.json()
@@ -1142,7 +1184,7 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
 
 def optimize_with_llm(instruction: str, instruction_type: str = None) -> OptimizationResult:
     """Optimize using LLM when API key is configured."""
-    cfg = load_config()
+    cfg = get_llm_config()
     api_key = cfg.get("llm_api_key")
     model = cfg.get("llm_model", "gpt-4")
     endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
