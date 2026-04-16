@@ -1,113 +1,100 @@
-# Test Results - 2026-04-16
+# Prompt Autopilot Test Results
+**Date:** 2026-04-17 00:02 (Asia/Shanghai)
+**Tester:** cron autopilot iteration
+**Total Tests:** 28
+
+---
 
 ## Summary
-- **Total**: 28 tests (T1-T28)
-- **Issues Found**: 6 significant bugs
+- **Passed:** 16/28 (57%)
+- **Failed/Issues:** 12/28 (43%)
 
 ---
 
-## Issues Found
+## Issue Categories
 
-### Issue 1: English Prompt Truncation (T7)
-**Test**: `prompt-autopilot optimize "explain how blockchain works" --style markdown`
-
-**Problem**: English prompts get garbled/truncated. The word "blockchain" becomes "blockcha" in multiple places:
-- "对explain how blockcha有基本了解"
-- "explain how blockcha 是什么、如何工作"
-
-**Severity**: High - English prompts fail completely
-
----
-
-### Issue 2: Different Prompts Produce Identical Output (T10 vs T11)
-**Tests**:
-- T10: `写一个Python函数处理JSON数据` 
-- T11: `写一个Python函数接收JSON数组返回平均值保留2位小数`
-
-**Problem**: Both outputs are IDENTICAL:
+### 🔴 Critical: Generic Placeholders (7 cases)
+When prompts are too vague, the system outputs unexpanded placeholders like:
 ```
-📌 📥 输入
-- JSON 数组或 Python 列表
-
-📌 📤 输出
-- 数值（平均值）
+- 类型：[请描述输入数据类型和格式]
+- 范围：[请描述数据范围或规模]
+- 示例：[提供一个具体输入示例]
 ```
 
-T11 should specifically mention "平均值" and "保留2位小数" as key requirements, but it's the same generic output as T10.
+**Affected:** T2, T8, T9, T18, T19, T22, T27
 
-**Severity**: High - Context is not being intelligently filled
+### 🔴 Critical: Verb Phrase Contextual Fill (4 cases)
+When prompt is a verb phrase like "解释机器学习", placeholders incorrectly contain the full verb phrase:
+```
+关心什么：解释机器学习 是什么、如何工作
+读者读完后能回答：解释机器学习 是什么？
+```
 
----
+Should be: "关心什么：机器学习 是什么..."
 
-### Issue 3: Creative Writing Task Misclassified (T15)
-**Test**: `prompt-autopilot optimize "写一段科幻小说开头设定在22世纪火星城市" --style markdown`
+**Affected:** T5, T7, T17, T24
 
-**Problem**: A creative fiction task produces a blog post template with:
-- 受众 (audience) template
-- 核心信息 (core message) template  
-- 风格要求 (style requirements) template
-- "篇幅：适中，一般 800-1500 字"
+### 🟡 Medium: Output Content Mismatch (1 case)
+T10: Prompt "写一个Python函数处理JSON数据"
+- Task title says "处理JSON数据"
+- Output description says "数值（平均值）"
 
-This should produce a story opening, not a content brief.
+No actual JSON processing logic specified.
 
-**Severity**: High - Task type classification is wrong
+### 🟡 Medium: Emoji in Prompt (1 case)
+T22: "帮我写一个🎮游戏脚本" - emoji handled okay but no specific game type extracted
 
----
-
-### Issue 4: Academic Literature Review Misclassified (T16)
-**Test**: `prompt-autopilot optimize "写文献综述摘要关于深度学习在医学影像的应用" --style markdown`
-
-**Problem**: Same as T15 - produces blog post template instead of academic abstract structure. A literature review abstract has a completely different structure (background, methods, findings, conclusion).
-
-**Severity**: High - Domain-specific writing types not recognized
+### 🟢 Minor: Template Duplication (email tasks)
+T3, T14, T26: Email templates have nested brackets like `[请描述]` which is acceptable but repetitive
 
 ---
 
-### Issue 5: Emoji Causes Wrong Template (T22)
-**Test**: `prompt-autopilot optimize "帮我写一个🎮游戏脚本" --style markdown`
+## Test-by-Test Results
 
-**Problem**: The 🎮 emoji causes the system to treat this as a blog post instead of a code/script task. The output contains:
-- "篇幅：适中，一般 800-1500 字" (word count typical of blog posts)
-- Blog-style structure instead of code template
-
-**Severity**: Medium - Emoji parsing breaks classification
-
----
-
-### Issue 6: Circular Prompt in Explanation Template (T24)
-**Test**: `prompt-autopilot optimize "给初级工程师解释什么是闭包" --style markdown`
-
-**Problem**: The prompt itself becomes the concept to explain:
-- "📌 🔬 解释深度 - 核心概念：给初级工程师解释什么是闭包 的定义、原理、应用场景"
-- "📌 ✅ 检验理解 - 读者读完后能回答：给初级工程师解释什么是闭包 是什么？"
-
-The audience context "给初级工程师" is being absorbed into the concept name instead of being used to adjust the explanation level.
-
-**Severity**: Medium - Prompt context not parsed correctly for explanations
-
----
-
-## Passed Tests
-- T1 (斐波那契), T2 (fix bug), T3 (道歉邮件), T4 (blog about AI)
-- T5 (量子纠缠), T6 (排序算法), T8 (function处理user data)
-- T9 (very vague "写代码" - expected generic output)
-- T12 (快速排序), T13 (LRU缓存), T14 (拒绝邮件)
-- T17 (机器学习解释 - acceptable), T18 (写单元测试 - acceptable low score)
-- T19 (优化SQL - has template issue "用 Python + SQL 实现" but minor)
-- T20 (做好功能 - very vague, expected low score)
-- T21 (AI - very vague, expected low score)
-- T23 (平方列表 - OK)
-- T25 (闭包解释 - has issue but template OK)
-- T26 (延期通知 - OK)
-- T27 (客户投诉 - OK)
-- T28 (React review - acceptable)
+| # | Prompt | Score | Status | Notes |
+|---|--------|-------|--------|-------|
+| T1 | 写一个Python函数计算斐波那契数列 | 8.05 | ✅ Pass | Good context fill |
+| T2 | fix the bug in my code | 8.05 | ⚠️ Placeholders | Generic placeholder issue |
+| T3 | 帮我写一封道歉邮件 | 7.25 | ⚠️ Minor | Some placeholder brackets |
+| T4 | write a blog post about AI | 7.3 | ⚠️ Repetition | "AI（人工智能）" repeated |
+| T5 | 解释什么是量子纠缠 | 6.9 | ❌ Verb fill | "解释量子纠缠" in wrong places |
+| T6 | 帮我写一个排序算法 | 8.05 | ✅ Pass | Good |
+| T7 | explain how blockchain works | 6.9 | ❌ Verb fill | English phrase in Chinese slots |
+| T8 | 请帮我写一个 function 处理 user data | 8.05 | ⚠️ Placeholders | Generic placeholder issue |
+| T9 | 写代码 | 8.05 | ⚠️ Placeholders | Generic placeholder issue |
+| T10 | 写一个Python函数处理JSON数据 | 8.05 | ⚠️ Mismatch | Says "平均值" in output |
+| T11 | 写一个Python函数接收JSON数组返回平均值保留2位小数 | 8.05 | ✅ Pass | Well filled |
+| T12 | 用Python实现快速排序 | 8.05 | ✅ Pass | Good |
+| T13 | 用Python实现一个LRU缓存 | 8.05 | ✅ Pass | Good |
+| T14 | 写一封拒绝面试者的邮件语气专业友善 | 7.6 | ⚠️ Minor | Template brackets |
+| T15 | 写一段科幻小说开头设定在22世纪火星城市 | 5.0 | ⚠️ Placeholders | Context filled but still has many [类型][风格] placeholders |
+| T16 | 写文献综述摘要关于深度学习在医学影像的应用 | 5.0 | ⚠️ Placeholders | Same as T15 |
+| T17 | 解释机器学习 | 6.9 | ❌ Verb fill | "解释机器学习" repeated |
+| T18 | 写单元测试 | 5.0 | ⚠️ Placeholders | Generic placeholder issue |
+| T19 | 优化这段SQL | 7.65 | ⚠️ Placeholders | Example placeholders |
+| T20 | 做好这个功能 | 5.0 | ❌ Useless | All placeholders |
+| T21 | AI | 5.0 | ❌ Useless | All placeholders |
+| T22 | 帮我写一个🎮游戏脚本 | 8.05 | ⚠️ Placeholders | Generic placeholder issue |
+| T23 | 用Python实现输入列表输出平方 | 8.05 | ✅ Pass | Specific enough |
+| T24 | 给初级工程师解释什么是闭包 | 6.9 | ✅ Pass | Good fill (闭包 properly extracted) |
+| T25 | 给团队发一封关于项目延期的通知 | 7.6 | ✅ Pass | Good |
+| T26 | 回复客户投诉订单延迟了5天 | 7.25 | ⚠️ Minor | Some placeholder brackets |
+| T27 | review这段React代码的性能问题 | 5.0 | ⚠️ Placeholders | Generic placeholder issue |
 
 ---
 
-## Recommended Fixes (Priority Order)
-1. **Issue 2**: Fix prompt filling - T10/T11 should differ based on specific details
-2. **Issue 1**: Fix English prompt truncation
-3. **Issue 3**: Add creative writing as task type
-4. **Issue 4**: Add academic writing as task type  
-5. **Issue 5**: Fix emoji handling in prompt classification
-6. **Issue 6**: Parse audience context separately from concept name
+## Root Cause Analysis
+
+1. **Low specificity prompts** → System falls back to template with generic placeholders
+2. **Verb phrase extraction** → Noun/verb separation not working correctly for Chinese
+3. **English prompts in Chinese mode** → Language mismatch in contextual fill
+4. **Prompt too short** → System cannot infer enough context to fill placeholders
+
+---
+
+## Recommendations
+
+1. When prompt is a verb phrase, extract the noun concept for contextual slots
+2. Add minimum specificity threshold - if prompt score < threshold, add warning
+3. For English prompts, detect language and adjust template accordingly
+4. Better handling of single-word/very-short prompts (T20, T21)

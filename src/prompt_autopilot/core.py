@@ -343,27 +343,98 @@ def _strip_emoji(text: str) -> str:
 
 
 def _extract_core_concept(instruction: str) -> str:
-    """Extract the core concept from an explanation-style instruction."""
+    """Extract the core concept from an explanation-style instruction.
+    
+    Examples:
+    - "解释机器学习" -> "机器学习"
+    - "给初级工程师解释什么是闭包" -> "闭包"
+    - "教我理解什么是闭包" -> "闭包"
+    - "什么是HTTP协议" -> "HTTP协议"
+    - "讲讲Python的特点" -> "Python"
+    - "explain how blockchain works" -> "blockchain"
+    - "what is machine learning" -> "machine learning"
+    """
     text = instruction.strip()
+    
+    # First, check if instruction starts with "什么是" pattern (e.g., "什么是量子纠缠")
+    if text.startswith("什么是"):
+        return text[3:].strip()
+    
+    # Check for "X是什么意思" pattern
+    if "是什么意思" in text:
+        idx = text.find("是什么意思")
+        return text[:idx].strip()
+    
+    # Strip common explanation prefixes
     strip_prefixes = [
         "给初级工程师解释什么是", "给工程师解释什么是", "给程序员解释什么是",
         "给小白解释什么是", "解释什么是", "解释一下什么是", "解释一下",
         "介绍一下", "通俗地介绍", "用通俗语言介绍", "深入讲解", "讲解一下",
         "普及一下", "告诉你有关", "讲讲", "告诉我有关", "说说什么是", "说一说",
+        # Additional prefixes for common patterns
+        "解释", "讲解", "介绍", "说明", "教我理解", "帮我理解",
+        "让我了解", "让我们了解", "请解释", "请讲解", "请介绍",
     ]
     for prefix in strip_prefixes:
         if text.startswith(prefix):
             text = text[len(prefix):]
             break
+    
+    # Strip common suffixes
     strip_suffixes = [
         "的定义", "的定义、原理", "的定义、原理、应用", "的原理",
-        "的原理和应用", "的概念", "的相关知识", "的一切",
+        "的原理和应用", "的概念", "的相关知识", "的一切", "的特点",
+        "的工作原理", "是如何工作的", "是如何实现的",
     ]
     for suffix in strip_suffixes:
         if text.endswith(suffix):
             text = text[:-len(suffix)]
             break
-    return text.strip() if text.strip() else instruction
+    
+    # If we extracted something meaningful from Chinese patterns, return it
+    # (But don't return early for English - we need to check English patterns first)
+    original_text = instruction.strip()
+    if text.strip() and text.strip() != original_text:
+        return text.strip()
+    
+    # Handle English patterns BEFORE returning original text
+    text_lower = text.lower()
+    
+    # Pattern: "explain how X works" -> extract X
+    if text_lower.startswith("explain how "):
+        rest = text[12:]  # "explain how " is 12 chars
+        if " works" in rest:
+            return rest[:rest.find(" works")].strip()
+        return rest.strip()
+    
+    # Pattern: "what is X" / "what are X" -> extract X
+    if text_lower.startswith("what is "):
+        rest = text[8:]  # "what is " is 8 chars
+        # Remove trailing question mark or other punctuation
+        rest = rest.rstrip('?').strip()
+        return rest
+    if text_lower.startswith("what are "):
+        rest = text[9:]  # "what are " is 9 chars
+        rest = rest.rstrip('?').strip()
+        return rest
+    
+    # Pattern: "tell me about X" / "explain X" -> extract X
+    if text_lower.startswith("tell me about "):
+        return text[14:].strip()  # "tell me about " is 14 chars
+    if text_lower.startswith("explain "):
+        rest = text[7:].strip()  # "explain " is 7 chars
+        # If followed by "what is" or "how", strip that
+        if rest.lower().startswith("what is "):
+            rest = rest[8:]
+        if rest.lower().startswith("how "):
+            parts = rest.split(" how ", 1)
+            if len(parts) > 1:
+                rest = parts[1]
+                if rest.startswith("is ") or rest.startswith("are "):
+                    rest = rest[3:]
+        return rest.rstrip('?').strip()
+    
+    return instruction
 
 
 def detect_instruction_type(instruction: str) -> str:
@@ -395,6 +466,14 @@ def detect_instruction_type(instruction: str) -> str:
         "斐波那契", "fibonacci", "quicksort", "mergesort",
         "脚本", "代码脚本", "游戏脚本", "程序脚本",
     ]
+    # Check explanation BEFORE code, because single words like "api", "python" 
+    # might appear in explanation contexts (e.g., "什么是RESTful API")
+    if any(word in text_lower for word in [
+        "explain", "what", "how", "why", "difference", "解释", "说明", "是什么", "什么是", "为什么", "介绍",
+        "理解", "懂得", "搞清楚", "弄明白",
+    ]):
+        return "explanation"
+    
     if any(word in text_lower for word in code_keywords):
         return "code"
     
@@ -431,11 +510,6 @@ def detect_instruction_type(instruction: str) -> str:
     ]
     if any(word in text_lower for word in writing_keywords):
         return "writing"
-    
-    if any(word in text_lower for word in [
-        "explain", "what", "how", "why", "difference", "解释", "说明", "是什么", "什么是", "为什么", "介绍"
-    ]):
-        return "explanation"
     
     if "?" in text or "吗" in text or "？" in text:
         return "question"
@@ -710,6 +784,41 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
     """
     stripped = instruction.strip()
     lang = detect_language(instruction)
+    
+    # Minimal prompt handling - if instruction is too short or too vague, return helpful message
+    # But allow known explanation patterns even if short
+    explanation_patterns = [
+        "解释", "讲解", "介绍", "什么是", "是什么", "说明",
+        "explain", "what is", "what are", "how does", "tell me about",
+    ]
+    is_explanation_pattern = any(stripped.startswith(p) or stripped.lower().startswith(p.lower()) 
+                                  for p in explanation_patterns)
+    
+    if len(stripped) < 8 and not is_explanation_pattern:
+        return f"""## ⚠️ 指令信息不足
+
+您的指令「{stripped}」太简略，无法生成有针对性的优化 prompt。
+
+### 💡 请补充更多信息
+
+建议包括：
+- **任务目标**：想要实现什么？
+- **具体场景**：在什么情况下使用？
+- **技术要求**：有什么特殊约束吗？
+
+### 📝 示例
+
+| 简短 ❌ | 详细 ✅ |
+|--------|--------|
+| AI | 帮我写一篇关于AI发展趋势的博客 |
+| 做好这个功能 | 用Python实现用户登录功能，支持JWT认证 |
+| 写代码 | 用Python写一个快速排序算法 |
+
+### 🔧 优化后的 prompt 将包含
+- 清晰的任务描述
+-具体的输入/输出规格
+- 边界情况处理
+- 质量标准"""
 
     if instruction_type == "code_review":
         return f"""## 🎯 任务
@@ -812,9 +921,15 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             if any(w in instr_lower for w in ['排序', 'sort', '升序', '降序']):
                 specific_reqs.append('排序处理')
             
-            output_desc = defaults.get('output', '根据任务目标确定')
+            # Only use default output if user explicitly mentioned an operation
+            # Otherwise, generate a description based on what user actually asked for
             if specific_reqs:
                 output_desc = ' + '.join(specific_reqs)
+            elif any(w in instr_lower for w in ['json']):
+                # User mentioned JSON but not the operation - generic JSON processing
+                output_desc = '根据处理需求确定（如转换、提取、验证等）'
+            else:
+                output_desc = '根据任务目标确定'
             
             return f"""## 🎯 任务
 用 {lang_default} 实现：{stripped}
