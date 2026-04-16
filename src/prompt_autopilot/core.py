@@ -645,6 +645,92 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             return "终端用户"
         return "[描述读者背景、职业、关注点]"
 
+    # ---- Extract useful info from instruction ----
+    def _extract_info(instruction: str) -> dict:
+        """从指令中提取主题、风格、受众等有用信息，用于填充模板占位符。"""
+        info = {
+            "topic": None,
+            "depth": "扫盲科普",
+            "style": "通俗易懂",
+            "audience": "一般读者",
+            "format": "文章",
+            "language": "中文",
+            "analogy": "用生活中的例子说明",
+            "tone": "通俗易懂，适合科普",
+        }
+        inst_lower = instruction.lower()
+
+        # 提取主题关键词
+        topic_keywords = {
+            "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
+            "区块链": "区块链", "比特币": "区块链",
+            "Python": "Python", "Java": "Java", "Go": "Go",
+            "机器学习": "机器学习", "深度学习": "深度学习",
+            "大模型": "大模型", "LLM": "大语言模型",
+            "云计算": "云计算", "边缘计算": "边缘计算",
+            "物联网": "物联网", "5G": "5G",
+            "网络安全": "网络安全", "黑客": "网络安全",
+            "量子计算": "量子计算", "量子": "量子计算",
+        }
+        for kw, label in topic_keywords.items():
+            if kw in inst_lower or kw in instruction:
+                info["topic"] = label
+                break
+        if info["topic"] is None:
+            # 尝试用前20个字作为主题摘要
+            info["topic"] = instruction[:20].strip(" ，、.") or "该主题"
+
+        # 推断深度和风格
+        if any(w in inst_lower for w in ["专业", "深入", "高级", "源码", "原理"]):
+            info["depth"] = "深入专业"
+            info["style"] = "专业严谨"
+        if any(w in inst_lower for w in ["通俗", "入门", "扫盲", "科普", "小白"]):
+            info["depth"] = "扫盲科普"
+            info["style"] = "通俗易懂"
+        if any(w in inst_lower for w in ["生活中的例子", "生活例子", "日常", "实例"]):
+            info["analogy"] = "用生活中的例子说明"
+            info["style"] = "通俗易懂，有生活气息"
+
+        # 推断受众
+        if any(w in inst_lower for w in ["工程师", "developer", "程序员", "技术", "码农"]):
+            info["audience"] = "技术人员/工程师"
+        elif any(w in inst_lower for w in ["老板", "管理层", "manager", "高管"]):
+            info["audience"] = "管理层/决策者"
+        elif any(w in inst_lower for w in ["客户"]):
+            info["audience"] = "客户"
+        elif any(w in inst_lower for w in ["用户", "使用者"]):
+            info["audience"] = "终端用户"
+        elif any(w in inst_lower for w in ["学生", "小白", "入门"]):
+            info["audience"] = "初学者/学生"
+        else:
+            info["audience"] = f"一般读者，对{info['topic']}有基本了解"
+
+        # 推断写作格式
+        if any(w in inst_lower for w in ["博客", "文章", "帖子", "公众号"]):
+            info["format"] = "博客文章"
+        elif any(w in inst_lower for w in ["邮件", "email", "邮件"]):
+            info["format"] = "邮件"
+        elif any(w in inst_lower for w in ["报告", "分析"]):
+            info["format"] = "分析报告"
+        elif any(w in inst_lower for w in ["PPT", "演示", "演讲"]):
+            info["format"] = "演示文稿"
+
+        # 推断语言
+        if any(w in instruction for w in ["英文", "English", "用英语", "write in english"]):
+            info["language"] = "英文"
+
+        # 推断语气
+        if "专业" in inst_lower or "正式" in inst_lower:
+            info["tone"] = "专业正式"
+        elif "轻松" in inst_lower or "活泼" in inst_lower:
+            info["tone"] = "轻松活泼"
+        elif "亲切" in inst_lower:
+            info["tone"] = "亲切友善"
+        elif "通俗" in inst_lower or "科普" in inst_lower or "小白" in inst_lower:
+            info["tone"] = "通俗易懂，适合科普"
+
+        return info
+
     if instruction_type == "code_review":
         return f"""## 🎯 任务
 审查以下代码：{instruction}
@@ -989,49 +1075,51 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 [姓名] | [部门] | [日期]"""
 
     elif instruction_type == "writing":
-        tone = _extract_tone(instruction)
-        audience = _extract_audience(instruction)
+        info = _extract_info(instruction)
+        topic = info["topic"]
         return f"""## 🎯 写作任务
 {instruction}
 
 ## 👥 受众
-- 目标读者：{audience}
-- 读者关心什么：[他们最在意什么]
-- 读者已知什么：[他们对主题了解多少]
+- 目标读者：{info['audience']}
+- 读者关心什么：{topic} 的核心价值和应用
+- 读者已知什么：对 {topic} 有基本了解
 
 ## 🎯 核心信息
-- 主要观点：[最想传达的 1-2 句话]
-- 期望行动：[读完希望读者做什么？]
+- 主要观点：围绕 {topic} 展开，传达核心观点
+- 期望行动：让读者了解并能实际应用
 
 ## 🎨 风格要求
-- 语气：{tone}
-- 语言：[中文/英文]
-- 篇幅：[字数或段落数要求]
+- 语气：{info['tone']}
+- 语言：{info['language']}
+- 篇幅：适中，一般 800-1500 字
 
 ## 🏗️ 结构
-- 开头：[如何吸引读者]
-- 主体：[核心要点 1-2 个]
-- 结尾：[如何收尾，行动号召]"""
+- 开头：先用问题或现象引入，吸引注意力
+- 主体：围绕 {topic} 的核心要点展开
+- 结尾：总结要点，行动号召或思考引导"""
     elif instruction_type == "explanation":
+        info = _extract_info(instruction)
+        topic = info["topic"]
         return f"""## 🎯 解释任务
 {instruction}
 
 ## 👤 受众画像
-- 年龄/职业：[目标读者]
-- 技术背景：[他们对主题了解多少]
-- 关心什么：[最想了解什么]
+- 年龄/职业：{info['audience']}
+- 技术背景：一般读者，对 {topic} 有基本了解
+- 关心什么：{topic} 是什么、如何工作、有什么应用场景
 
 ## 🔬 解释深度
-- 层次：[扫盲科普/中等理解/深入专业]
-- 核心概念：[1-3 个必须讲清楚的概念]
+- 层次：{info['depth']}
+- 核心概念：{topic} 的定义、原理、应用场景
 
 ## 🧩 讲解策略
-- 类比场景：[用生活中的什么来类比]
-- 讲解顺序：[从已知到未知]
+- 类比场景：{info['analogy']}
+- 讲解顺序：从已知到未知，逐步深入
 
 ## ✅ 检验理解
-- 读者读完后能回答：[1-2 个检验问题]
-- 常见误解：[提前澄清 1 个误区]"""
+- 读者读完后能回答：{topic} 是什么？有什么应用场景？
+- 常见误解：{topic} 不是万能的，有其适用范围"""
     else:
         return f"""## 🎯 任务
 {instruction}
