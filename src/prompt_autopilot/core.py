@@ -579,12 +579,21 @@ def _rule_based_analysis(instruction: str) -> AnalysisResult:
     lang = detect_language(instruction)
     instr_type = detect_instruction_type(instruction)
     
+    # Compute effective word count: use Chinese char count for Chinese text
+    # (English word split gives meaningful count; Chinese split() gives 1 for entire string)
+    chinese_chars = _count_chinese_chars(instruction)
+    if lang == "zh" and chinese_chars > 0:
+        # For Chinese: use char count as "word count" proxy
+        effective_word_count = chinese_chars
+    else:
+        effective_word_count = len(words)
+    
     # Determine complexity based on length and type
-    if len(words) <= 5 and instr_type in ["code", "writing", "explanation"]:
+    if effective_word_count <= 10 and instr_type in ["code", "writing", "explanation"]:
         complexity = "simple"
     elif any(phrase in instruction for phrase in ["具体", "详细", "一步步", "step by step", "详细说明"]):
         complexity = "complex"
-    elif len(words) <= 8:
+    elif effective_word_count <= 20:
         complexity = "simple"
     else:
         complexity = "medium"
@@ -601,13 +610,13 @@ def _rule_based_analysis(instruction: str) -> AnalysisResult:
             missing=missing,
             assumptions=assumptions,
             risks=risks,
-            word_count=len(words),
+            word_count=effective_word_count,
             instruction_type=instr_type,
             language=lang,
             task_complexity=complexity,
         )
     
-    if len(words) < 5:
+    if effective_word_count < 10:
         missing.append("Context too brief")
     
     if instr_type == "code":
@@ -622,7 +631,7 @@ def _rule_based_analysis(instruction: str) -> AnalysisResult:
         missing=missing,
         assumptions=assumptions,
         risks=risks,
-        word_count=len(words),
+        word_count=effective_word_count,
         instruction_type=instr_type,
         language=lang,
         task_complexity=complexity,
@@ -683,6 +692,35 @@ _CODE_DEFAULTS = {
         "output": "JSON 响应 {code, message, data}",
         "constraints": "RESTful 规范，状态码正确，参数校验",
         "boundary": "参数缺失、格式错误、未授权访问",
+    },
+    # Issue #1 fix: Add missing entries for LRU cache, game scripts, and data processing
+    ("lru", "cache", "缓存"): {
+        "lang": "Python",
+        "input": "整数 key（任意类型）+ 任意类型 value",
+        "output": "按 LRU 策略存储和返回 value，超容量时淘汰最久未使用的条目",
+        "constraints": "时间复杂度 O(1) 的 get 和 put 操作",
+        "boundary": "容量为 0、key 不存在、重复插入同一 key",
+    },
+    ("游戏", "game", "脚本", "script"): {
+        "lang": "Python + Pygame / 终端游戏",
+        "input": "用户输入（键盘/鼠标/命令行）",
+        "output": "游戏画面更新或文本输出",
+        "constraints": "流畅运行，无明显卡顿",
+        "boundary": "非法输入、游戏结束条件、暂停/恢复",
+    },
+    ("function", "函数", "method", "方法"): {
+        "lang": "Python",
+        "input": "函数参数（类型和含义由调用方指定）",
+        "output": "函数返回值（类型和含义由调用方指定）",
+        "constraints": "代码清晰，注释完善",
+        "boundary": "非法输入类型、空输入、边界值",
+    },
+    ("user", "data", "数据", "用户"): {
+        "lang": "Python",
+        "input": "用户数据对象（字典/JSON/数据库记录）",
+        "output": "处理后的数据（视任务目标而定）",
+        "constraints": "数据验证，异常处理",
+        "boundary": "空数据、格式错误、缺失字段",
     },
 }
 
@@ -765,12 +803,28 @@ def _extract_info(instruction: str) -> dict:
     if any(w in inst_stripped for w in ["英文", "English", "用英语", "write in english"]):
         info["language"] = "英文"
 
-    if "专业" in inst_lower or "正式" in inst_lower:
-        info["tone"] = "专业正式"
-    elif "轻松" in inst_lower or "活泼" in inst_lower:
-        info["tone"] = "轻松活泼"
-    elif "亲切" in inst_lower:
-        info["tone"] = "亲切友善"
+    # Combine tone descriptors instead of using if/elif (fixes P4: "专业" + "友善" → "专业友善")
+    tone_parts = []
+    if "专业" in inst_lower:
+        tone_parts.append("专业")
+    if "正式" in inst_lower:
+        tone_parts.append("正式")
+    if "轻松" in inst_lower:
+        tone_parts.append("轻松")
+    if "活泼" in inst_lower:
+        tone_parts.append("活泼")
+    if "亲切" in inst_lower:
+        tone_parts.append("亲切")
+    if "友善" in inst_lower:
+        tone_parts.append("友善")
+    if "通俗" in inst_lower:
+        tone_parts.append("通俗易懂")
+    if "科普" in inst_lower:
+        tone_parts.append("适合科普")
+    if "小白" in inst_lower:
+        tone_parts.append("适合小白")
+    if tone_parts:
+        info["tone"] = "".join(tone_parts)
     elif "通俗" in inst_lower or "科普" in inst_lower or "小白" in inst_lower:
         info["tone"] = "通俗易懂，适合科普"
 
@@ -946,26 +1000,65 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 ## 🛡️ 边界情况
 {boundary}"""
         else:
+            # Smart generic fallback: infer as much as possible from the instruction
+            instr_lower = stripped.lower()
+            
+            # Detect language from instruction for placeholder language
+            if lang == "zh":
+                ph_input = "类型和数据范围（根据任务描述推断）"
+                ph_output = "任务目标的处理结果"
+                ph_example_in = "具体输入示例"
+                ph_example_out = "对应输出示例"
+                ph_time = "如有要求请注明（如 O(n)）"
+                ph_space = "如有要求请注明（如 O(1)）"
+                ph_empty = "空输入 → 如何处理"
+                ph_abnormal = "异常值 → 如何处理"
+                lang_default = "Python"
+            else:
+                ph_input = "Input type and format (inferred from task)"
+                ph_output = "Expected output based on task goal"
+                ph_example_in = "Concrete input example"
+                ph_example_out = "Corresponding output example"
+                ph_time = "If required, e.g., O(n)"
+                ph_space = "If required, e.g., O(1)"
+                ph_empty = "Empty input → how to handle"
+                ph_abnormal = "Abnormal values → how to handle"
+                lang_default = "Python"
+            
+            # Try to infer language from instruction keywords
+            if any(w in instr_lower for w in ["python", "py"]):
+                lang_default = "Python"
+            elif any(w in instr_lower for w in ["javascript", "js", "node"]):
+                lang_default = "JavaScript (Node.js)"
+            elif any(w in instr_lower for w in ["java", "java语言"]):
+                lang_default = "Java"
+            elif "go " in instr_lower or instr_lower.startswith("go ") or instr_lower == "go":
+                lang_default = "Go"
+            elif any(w in instr_lower for w in ["rust", "rs"]):
+                lang_default = "Rust"
+            elif any(w in instr_lower for w in ["c++", "cpp"]):
+                lang_default = "C++"
+            elif any(w in instr_lower for w in ["sql", "数据库", "db"]):
+                lang_default = "SQL"
+            
             return f"""## 🎯 任务
-用 Python 实现：{stripped}
+用 {lang_default} 实现：{stripped}
 
 ## 📥 输入
-- 类型：[请描述输入数据类型和格式]
-- 范围：[请描述数据范围或规模]
-- 示例：[提供一个具体输入示例]
+- {ph_input}
+- 示例：{ph_example_in}
 
 ## 📤 输出
-- 类型：[请描述输出数据类型和格式]
-- 示例：[提供对应的输出示例]
+- {ph_output}
+- 示例：{ph_example_out}
 
 ## ⚡ 性能要求
-- 时间复杂度：[如有要求]
-- 空间复杂度：[如有要求]
+- 时间复杂度：{ph_time}
+- 空间复杂度：{ph_space}
 
 ## 🛡️ 边界情况
-- 空输入 →
-- 异常值 →
-- 大规模数据 →"""
+- {ph_empty}
+- {ph_abnormal}"""
 
     # Email types
     if instruction_type == "rejection_email":
@@ -1183,8 +1276,29 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         recommendations.append("- Role：扮演耐心的老师")
         recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
         recommendations.append("- Few-shot：给1个理解过程的示例")
-        examples.append('类比：把"区块链去中心化"比作"村民共同记账"')
-        examples.append("类比：数据库索引就像书的目录")
+        # Issue #5 fix: Use topic-relevant analogies instead of generic ones
+        instr_lower = instruction.lower()
+        if any(kw in instr_lower for kw in ["量子", "quantum", "纠缠", "entangle"]):
+            examples.append('类比：两个粒子无论相隔多远，一个动另一个同时动——像心灵感应的双胞胎')
+            examples.append('类比：想象两个人各拿一枚总是朝向相反的硬币')
+        elif any(kw in instr_lower for kw in ["机器学习", "machine learning", "ml", "监督学习", "分类", "回归"]):
+            examples.append('类比：教小孩认识猫——给他看很多猫的照片，下次他就能认出猫了')
+            examples.append('类比：学生做题后看答案纠正思路，逐渐学会解题方法')
+        elif any(kw in instr_lower for kw in ["区块链", "blockchain", "比特币", "bitcoin"]):
+            examples.append('类比：把"区块链去中心化"比作"村民共同记账"')
+            examples.append('类比：区块链像一本无法撕页、无法篡改的公共账本')
+        elif any(kw in instr_lower for kw in ["数据库", "index", "索引", "database"]):
+            examples.append('类比：数据库索引就像书的目录，找内容不用翻完整本书')
+            examples.append('类比：图书馆索引柜告诉你书籍在哪个区域')
+        elif any(kw in instr_lower for kw in ["api", "rest", "接口", "restful"]):
+            examples.append('类比：API 就像餐厅服务员——你告诉服务员要什么菜，他去厨房拿给你')
+            examples.append('类比：API 是软件之间的"对话窗口"，双方按约定格式交流')
+        elif any(kw in instr_lower for kw in ["微服务", "microservice", "云计算", "cloud"]):
+            examples.append('类比：微服务就像分工明确的团队，每人做专长的事')
+            examples.append('类比：云计算像用电——不用自己发电，按需付费')
+        else:
+            examples.append('类比：用生活中的例子说明，把复杂概念类比为熟悉的事物')
+            examples.append('类比：从已知到未知，按认知顺序逐步拆解')
 
     elif instr_type == "writing":
         recommendations.append("- Few-shot：给1篇范文参考")
@@ -1354,65 +1468,108 @@ def generate_optimized_versions(instruction: str, count: int = 3, tier: str = No
 # =============================================================================
 
 def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> EvaluationResult:
-    """Content-based evaluation that differentiates quality."""
+    """Content-based evaluation that differentiates quality.
+    
+    Issue #2 fix: Make scoring sensitive to input specificity.
+    - For Chinese instructions: use Chinese character count (not word count)
+    - For English instructions: use word count
+    - Strongly penalize generic placeholders
+    - Reward concrete, quantified specifications
+    """
     template = version["template"]
     instr_type = analysis["instruction_type"]
+    lang = analysis.get("language", "zh")
+    
+    # Use Chinese char count for Chinese instructions (word_count from split() is always 1 for Chinese)
+    if lang == "zh":
+        # Chinese char count; threshold for vagueness: < 10 chars = vague
+        # This is approximate - we don't have the original instruction here,
+        # but the word_count in analysis can serve as a proxy for specificity
+        word_count = analysis.get("word_count", 10)
+        # For Chinese: word_count is always 1 from split().
+        # Use the analysis['word_count'] as-is but cap at a reasonable max
+        # The REAL specificity signal comes from whether the template has concrete content
+        effective_count = word_count
+    else:
+        effective_count = analysis.get("word_count", 10)
+    
+    # Base score from instruction vagueness - lower for vague instructions
+    vagueness_penalty = max(0, (10 - effective_count) * 0.3)
+    
+    clarity_score = max(1, round(7.0 - vagueness_penalty, 2))
+    specificity_score = max(1, round(7.0 - vagueness_penalty, 2))
+    completeness_score = max(1, round(7.0 - vagueness_penalty, 2))
 
-    clarity_score = 5
-    specificity_score = 5
-    completeness_score = 5
-
+    # Penalty for generic placeholder phrases (both English and Chinese)
     truly_blank_phrases = [
         "[请补充]", "[描述]", "[填写]", "[如 有]", "[可选]",
         "[你决定]", "[未知]", "[自定义]", "______",
         "[数据类型、格式、范围]", "[数据类型]", "[格式]", "[范围]",
+        "类型和数据范围（根据任务描述推断）",  # Chinese generic placeholder
+        "任务目标的处理结果",  # Chinese generic placeholder
+        "具体输入示例",  # Chinese generic placeholder
+        "对应输出示例",  # Chinese generic placeholder
+        "如有要求请注明",  # Chinese generic placeholder
+        "空输入 → 如何处理",  # Chinese generic placeholder
+        "异常值 → 如何处理",  # Chinese generic placeholder
     ]
     for phrase in truly_blank_phrases:
         if phrase in template:
-            blank_penalty = template.count(phrase)
-            specificity_score -= blank_penalty
-            completeness_score -= blank_penalty
+            blank_count = template.count(phrase)
+            specificity_score -= blank_count * 0.8
+            completeness_score -= blank_count * 0.8
 
     if instr_type == "code":
+        # Strong bonus for real input/output specs (not generic placeholders)
         if _has_real_content(template, ["输入", "input", "参数"]):
-            specificity_score += 2
-            completeness_score += 1
+            specificity_score += 2.5
+            completeness_score += 1.5
         if _has_real_content(template, ["输出", "output", "返回"]):
-            specificity_score += 1
-            completeness_score += 1
+            specificity_score += 1.5
+            completeness_score += 1.5
+        # Strong bonus for quantified constraints (time/space complexity)
         if _has_quantified_constraint(template):
-            specificity_score += 2
+            specificity_score += 3.0
+            completeness_score += 1.5
+        # Bonus for explicit language specification
         if _has_explicit_language(template, ["python", "javascript", "java", "go", "rust", "sql"]):
-            specificity_score += 1
+            specificity_score += 1.5
+        # Bonus for boundary case handling
         if _has_real_content(template, ["边界", "edge", "空输入", "异常"]):
-            completeness_score += 1
+            completeness_score += 2.0
+            specificity_score += 1.0
+        # Bonus for concrete code examples in template
+        if "```" in template or "def " in template or "function " in template:
+            specificity_score += 2.0
+            completeness_score += 1.0
 
     elif instr_type == "writing":
         if _has_real_content(template, ["受众", "读者", "audience"]):
-            specificity_score += 2
-            completeness_score += 1
+            specificity_score += 2.5
+            completeness_score += 1.5
         if _has_real_content(template, ["写作目的", "核心", "key point"]):
-            specificity_score += 1
-            completeness_score += 1
+            specificity_score += 1.5
+            completeness_score += 1.5
 
     elif instr_type == "explanation":
         if _has_real_content(template, ["受众", "背景", "audience"]):
-            specificity_score += 2
-            completeness_score += 1
+            specificity_score += 2.5
+            completeness_score += 1.5
         if _has_real_content(template, ["类比", "analogy"]):
-            completeness_score += 1
+            completeness_score += 1.5
+            specificity_score += 1.0
 
     elif instr_type in ("rejection_email", "notification_email", "complaint_email",
                         "apology_email", "report_email"):
         if _has_real_content(template, ["称呼"]):
-            completeness_score += 1
-        if _has_real_content(template, ["正文", "正文", "内容"]):
-            completeness_score += 1
+            completeness_score += 1.5
+        if _has_real_content(template, ["正文", "内容"]):
+            completeness_score += 1.5
         if _has_real_content(template, ["语气", "tone", "风格"]):
-            specificity_score += 1
+            specificity_score += 1.5
         if _has_real_content(template, ["参考模板", "模板", "示例"]):
-            specificity_score += 2
-            completeness_score += 1
+            specificity_score += 2.5
+            completeness_score += 1.5
 
     clarity_score = max(1, min(10, clarity_score))
     specificity_score = max(1, min(10, specificity_score))
