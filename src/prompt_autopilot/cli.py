@@ -11,11 +11,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from prompt_autopilot import (
     optimize,
+    optimize_with_llm,
     analyze_instruction,
     generate_optimized_versions,
     evaluate_version,
     record_feedback,
     load_preferences,
+    load_config,
+    save_config,
     save_template,
     list_templates,
     search_templates,
@@ -38,6 +41,7 @@ def main():
     opt_parser.add_argument("instruction", nargs="*", help="Instruction to optimize")
     opt_parser.add_argument("--style", choices=["markdown", "rich", "minimal"], default="rich", help="Output style")
     opt_parser.add_argument("--all", action="store_true", help="Show all versions (not just recommended)")
+    opt_parser.add_argument("--use-llm", action="store_true", help="Use LLM to generate optimized prompt (requires API key)")
     
     # analyze command  
     anal_parser = subparsers.add_parser("analyze", aliases=["a"], help="Analyze an instruction")
@@ -60,10 +64,31 @@ def main():
     tpl_parser.add_argument("--search", "-s", help="Search templates")
     
     # prefs command
+    # config command
+    cfg_parser = subparsers.add_parser("config", help="Show/set LLM configuration")
+    cfg_parser.add_argument("--api-key", metavar="KEY", help="Set LLM API key")
+    cfg_parser.add_argument("--model", metavar="MODEL", help="Set LLM model (e.g., gpt-4)")
+    cfg_parser.add_argument("--endpoint", metavar="URL", help="Set LLM endpoint URL")
+
     prefs_parser = subparsers.add_parser("prefs", help="Show preferences")
     
     args = parser.parse_args()
     
+    # Handle --set-api-key at top level (before subcommand)
+    if "--set-api-key" in sys.argv:
+        idx = sys.argv.index("--set-api-key")
+        if idx + 1 < len(sys.argv):
+            key = sys.argv[idx + 1]
+            cfg = load_config()
+            cfg["llm_api_key"] = key
+            save_config(cfg)
+            print(f"✅ API key set: {key[:8]}...{key[-4:]}")
+            # Remove these args and continue
+            sys.argv = sys.argv[:idx] + sys.argv[idx + 2:]
+        else:
+            print("Error: --set-api-key requires a KEY argument", file=sys.stderr)
+            sys.exit(1)
+
     # Handle empty args - run interactive mode
     if len(sys.argv) == 1:
         interactive()
@@ -76,7 +101,7 @@ def main():
             print("Error: instruction required", file=sys.stderr)
             sys.exit(1)
         
-        result = optimize(instruction)
+        result = optimize(instruction, use_llm=args.use_llm)
         style = DisplayStyle(args.style) if args.style else DisplayStyle.RICH
         output = display_result(result, style=style, show_all=args.all)
         print(output)
@@ -155,6 +180,23 @@ def main():
                 print(f"    Tags: {', '.join(t['tags'])}")
             print()
         
+    elif args.command == "config":
+        cfg = load_config()
+        if args.api_key is not None:
+            cfg["llm_api_key"] = args.api_key
+        if args.model is not None:
+            cfg["llm_model"] = args.model
+        if args.endpoint is not None:
+            cfg["llm_endpoint"] = args.endpoint
+        save_config(cfg)
+        print("\n⚙️  LLM Config:\n")
+        for k, v in cfg.items():
+            if k == "llm_api_key":
+                display = v[:8] + "..." + v[-4:] if v and len(v) > 12 else "(not set)"
+                print(f"  {k}: {display}")
+            else:
+                print(f"  {k}: {v}")
+
     elif args.command == "prefs":
         prefs = load_preferences()
         print("\n⚙️  Preferences:\n")

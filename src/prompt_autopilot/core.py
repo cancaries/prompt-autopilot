@@ -7,12 +7,14 @@ not create more work for the user.
 
 import json
 import os
+import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, TypedDict
 
 # Storage paths
 AUTOPILOT_DIR = Path.home() / ".prompt-autopilot"
+CONFIG_FILE = AUTOPILOT_DIR / "config.json"
 PREFERENCES_FILE = AUTOPILOT_DIR / "preferences.json"
 TEMPLATES_DIR = AUTOPILOT_DIR / "templates"
 HISTORY_DIR = AUTOPILOT_DIR / "history"
@@ -28,6 +30,40 @@ DEFAULT_PREFERENCES = {
     "feedback_history": [],
     "auto_apply": False,
 }
+
+# =============================================================================
+# Category-Specific Generation Prompt Templates
+# =============================================================================
+
+CODE_GENERATION_PROMPT = '''你是编程专家。用户想要：{instruction}
+
+生成一个优化的编程 prompt，包含：
+1. 明确的编程语言/框架
+2. 输入输出规范
+3. 关键约束条件
+4. 性能或安全要求（如有）
+
+直接输出优化后的 prompt，不要解释。'''
+
+WRITING_GENERATION_PROMPT = '''你是写作专家。用户想要：{instruction}
+
+生成一个优化的写作 prompt，包含：
+1. 受众是谁
+2. 语气/风格
+3. 核心要点/信息
+4. 格式/结构要求
+
+直接输出优化后的 prompt，不要解释。'''
+
+EXPLANATION_GENERATION_PROMPT = '''你是一位老师。用户想要：{instruction}
+
+生成一个优化的解释性 prompt，包含：
+1. 核心概念的定义
+2. 生活中的类比/例子
+3. 关键要点
+4. 常见误解（如有）
+
+直接输出优化后的 prompt，不要解释。'''
 
 # =============================================================================
 # Types
@@ -65,6 +101,18 @@ class OptimizationResult(TypedDict):
 # =============================================================================
 # Preferences
 # =============================================================================
+
+def load_config() -> dict:
+    """Load LLM configuration."""
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {"llm_api_key": None, "llm_model": "gpt-4", "llm_endpoint": "https://api.openai.com/v1"}
+
+def save_config(cfg: dict):
+    """Save LLM configuration."""
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
 
 def load_preferences() -> dict:
     if PREFERENCES_FILE.exists():
@@ -863,11 +911,102 @@ def recommend_version(evaluations: list[EvaluationResult], analysis: AnalysisRes
     return 0
 
 # =============================================================================
+# LLM Generation
+# =============================================================================
+
+def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4",
+                      endpoint: str = "https://api.openai.com/v1/chat/completions",
+                      instruction_type: str = None) -> Optional[str]:
+    """
+    Use LLM with category-specific prompt to generate optimized prompt.
+    Requires user to provide their own API key.
+    Falls back to None if API key not provided or call fails.
+    """
+    if not api_key:
+        return None
+
+    # 根据类型选择生成 prompt
+    if instruction_type == "code":
+        system_prompt = "你是一个编程专家，擅长生成高质量的编程指令。"
+        user_prompt = CODE_GENERATION_PROMPT.format(instruction=instruction)
+    elif instruction_type == "writing":
+        system_prompt = "你是一个写作专家，擅长生成清晰的写作指令。"
+        user_prompt = WRITING_GENERATION_PROMPT.format(instruction=instruction)
+    elif instruction_type == "explanation":
+        system_prompt = "你是一位老师，擅长生成易懂的解释性指令。"
+        user_prompt = EXPLANATION_GENERATION_PROMPT.format(instruction=instruction)
+    else:
+        system_prompt = "你是一个助手。"
+        user_prompt = f"优化这个指令：{instruction}"
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.7,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
+
+
+def optimize_with_llm(instruction: str, instruction_type: str = None) -> OptimizationResult:
+    """Optimize using LLM when API key is configured."""
+    cfg = load_config()
+    api_key = cfg.get("llm_api_key")
+    model = cfg.get("llm_model", "gpt-4")
+    endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
+
+    if not api_key:
+        return optimize(instruction)
+
+    generated = generate_with_llm(instruction, api_key, model, endpoint, instruction_type)
+    if not generated:
+        return optimize(instruction)
+
+    analysis = analyze_instruction(instruction)
+    version: VersionResult = {
+        "type": "LLM (Custom)",
+        "description": "LLM 生成的优化版本（需自行配置 API key）",
+        "template": generated,
+        "is_direct": True,
+    }
+    evaluation = evaluate_version(version, analysis)
+
+    return {
+        "original": instruction,
+        "analysis": analysis,
+        "versions": [version],
+        "evaluations": [evaluation],
+        "recommended_idx": 0,
+        "recommended_version": version,
+        "recommended_evaluation": evaluation,
+    }
+
+
+# =============================================================================
 # Main Pipeline
 # =============================================================================
 
-def optimize(instruction: str) -> OptimizationResult:
-    """Main optimization pipeline."""
+def optimize(instruction: str, use_llm: bool = False) -> OptimizationResult:
+    """Main optimization pipeline. Set use_llm=True to prefer LLM generation."""
+    if use_llm:
+        analysis = analyze_instruction(instruction)
+        return optimize_with_llm(instruction, instruction_type=analysis["instruction_type"])
+
     analysis = analyze_instruction(instruction)
     versions = generate_optimized_versions(instruction)
     evaluations = [evaluate_version(v, analysis) for v in versions]
