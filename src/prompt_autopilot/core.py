@@ -279,7 +279,23 @@ def detect_task_complexity(instruction: str, instruction_type: str) -> str:
 def detect_instruction_type(instruction: str) -> str:
     instruction_lower = instruction.lower()
     
-    # Code
+    # Code review / code analysis (check BEFORE generic code keywords)
+    code_review_keywords = [
+        "review", "review代码", "代码review", "cr", "代码审查", "代码分析",
+        "性能review", "review这段", "代码审查", "review一下", "review下"
+    ]
+    if any(word in instruction_lower for word in code_review_keywords):
+        return "code_review"
+    
+    # Test generation (check BEFORE writing keywords)
+    test_generation_keywords = [
+        "单元测试", "unit test", "测试用例", "写测试", "test case",
+        "pytest", "jest", "testing", "测试代码"
+    ]
+    if any(word in instruction_lower for word in test_generation_keywords):
+        return "test_generation"
+    
+    # Code (generic)
     code_keywords = [
         "code", "function", "script", "implement", "debug", "fix", "refactor",
         "api", "database", "sql", "python", "javascript", "java", "golang", "rust",
@@ -381,6 +397,24 @@ def analyze_instruction(instruction: str) -> AnalysisResult:
 
 # Code task inference map: (keywords) → (language, input, output, constraints)
 _CODE_DEFAULTS = {
+    # JSON array / list processing
+    ("json", "数组", "list"): {
+        "lang": "Python",
+        "input": "JSON 数组或 Python 列表",
+        "output": "数值（平均值）",
+        "constraints": "时间复杂度 O(n)，空间复杂度 O(1)",
+        "boundary": "空数组返回 0 或空列表",
+        "optional": "支持嵌套数组？支持过滤条件？",
+    },
+    # Square / power
+    ("平方", "square", "幂", "power"): {
+        "lang": "Python",
+        "input": "数值或列表",
+        "output": "数值或列表（平方）",
+        "constraints": "时间复杂度 O(n)",
+        "boundary": "负数平方、正负数混合列表",
+        "optional": "支持复数？支持矩阵？",
+    },
     # Sorting
     ("排序", "sort"): {
         "lang": "Python",
@@ -510,12 +544,149 @@ def _infer_code_defaults(instruction: str) -> dict | None:
     return None
 
 
+def generate_inferred_prompt_via_llm(instruction: str, instruction_type: str) -> str | None:
+    """
+    When rule-based matching fails, use LLM to infer context and fill a structured template.
+    Returns None if no API key is available.
+    """
+    cfg = get_llm_config()
+    api_key = cfg.get("llm_api_key")
+    if not api_key:
+        return None
+
+    model = cfg.get("llm_model", "gpt-4")
+    endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
+
+    type_labels = {
+        "code": "编程/算法任务",
+        "code_review": "代码审查/分析",
+        "test_generation": "测试代码生成",
+        "writing": "写作任务",
+        "explanation": "解释/说明",
+        "general": "通用任务",
+    }
+    label = type_labels.get(instruction_type, "通用任务")
+
+    llm_prompt = f"""用户想要完成以下{label}，但描述比较模糊：
+
+{instruction}
+
+请根据你的深度推理能力，填充以下结构化模板（根据任务类型选择合适的章节）：
+
+## 🎯 任务
+[根据 instruction 推断的精确任务描述]
+
+## 📥 输入
+- 类型：[推断的数据类型]
+- 范围：[推断的数据规模/范围]
+- 示例：[一个具体示例]
+
+## 📤 输出
+- 类型：[推断的输出类型]
+- 示例：[对应的输出示例]
+
+## ⚡ 性能要求（如适用）
+- 时间复杂度：[如有要求]
+- 空间复杂度：[如有要求]
+
+## 🛡️ 边界情况
+- [从 instruction 推断的边界情况]
+
+直接输出填充好的模板内容，不要解释。"""
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "你是一个专业的 prompt 工程专家。直接输出填充好的模板，不要解释你的思考过程。"},
+                    {"role": "user", "content": llm_prompt},
+                ],
+                "temperature": 0.3,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
+
+
 def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
     """
     不用 LLM 时，生成结构化的 prompt 文本模板。
     对于常见任务类型，智能推断合理的默认规范，减少用户填写负担。
     绝不输出空白占位符，所有推断必须有实际值。
+    当规则匹配失败且 LLM API key 可用时，调用 LLM 推断并填充模板。
     """
+    # ---- Auto-fill tone/audience from instruction for writing tasks ----
+    def _extract_tone(instruction: str) -> str:
+        instruction_lower = instruction.lower()
+        tones = []
+        if "专业" in instruction_lower:
+            tones.append("专业")
+        if any(w in instruction_lower for w in ["友善", "友好"]):
+            tones.append("友善")
+        if any(w in instruction_lower for w in ["轻松", "活泼"]):
+            tones.append("轻松")
+        if "正式" in instruction_lower:
+            tones.append("正式")
+        if "亲切" in instruction_lower:
+            tones.append("亲切")
+        return "".join(tones) if tones else "[根据受众和场景选择]"
+
+    def _extract_audience(instruction: str) -> str:
+        if any(w in instruction.lower() for w in ["工程师", "developer", "程序员", "技术"]):
+            return "工程师/技术人员"
+        if any(w in instruction for w in ["老板", "管理层", "manager"]):
+            return "管理层/决策者"
+        if any(w in instruction for w in ["客户", "客户"]):
+            return "客户"
+        if any(w in instruction for w in ["用户", "使用者"]):
+            return "终端用户"
+        return "[描述读者背景、职业、关注点]"
+
+    if instruction_type == "code_review":
+        return f"""## 🎯 任务
+审查以下代码：{instruction}
+
+## 🔍 待审查代码
+[请提供代码，或描述代码所在模块/功能]
+
+## 🔎 审查维度
+- **正确性**：逻辑是否正确，边界情况是否处理
+- **性能**：时间/空间复杂度，是否有优化空间
+- **安全性**：是否有安全漏洞（注入、XSS、敏感信息泄露等）
+- **可读性**：命名、注释、结构是否清晰
+- **最佳实践**：是否符合语言/框架的推荐写法
+
+## ✅ 审查输出
+- 发现的问题列表（按严重程度：高/中/低）
+- 改进建议
+- 优化后的参考代码（如适用）"""
+
+    if instruction_type == "test_generation":
+        return f"""## 🎯 任务
+为以下代码编写单元测试：{instruction}
+
+## 🔍 待测代码
+[从上下文中推断或描述]
+
+## 📋 测试要求
+- 测试框架：[如 pytest, unittest, Jest]
+- 覆盖要求：[正常用例 + 边界用例 + 异常用例]
+- Mock 使用：[如需要]
+
+## ✅ 验收标准
+- 所有测试通过
+- 覆盖核心逻辑路径"""
+
     if instruction_type == "code":
         defaults = _infer_code_defaults(instruction)
         if defaults:
@@ -606,6 +777,10 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 ## 🛡️ 边界情况
 {boundary}"""
         else:
+            # Try LLM inference when rule-based matching fails
+            llm_result = generate_inferred_prompt_via_llm(instruction, instruction_type)
+            if llm_result:
+                return llm_result
             # Generic fallback — still has some structure, no blank [请补充]
             return f"""## 🎯 任务
 用 Python 实现：{instruction}
@@ -628,11 +803,13 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - 异常值 →
 - 大规模数据 →"""
     elif instruction_type == "writing":
+        tone = _extract_tone(instruction)
+        audience = _extract_audience(instruction)
         return f"""## 🎯 写作任务
 {instruction}
 
 ## 👥 受众
-- 目标读者：[描述读者背景、职业、关注点]
+- 目标读者：{audience}
 - 读者关心什么：[他们最在意什么]
 - 读者已知什么：[他们对主题了解多少]
 
@@ -641,7 +818,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - 期望行动：[读完希望读者做什么？]
 
 ## 🎨 风格要求
-- 语气：[正式/亲切/专业/轻松？]
+- 语气：{tone}
 - 语言：[中文/英文]
 - 篇幅：[字数或段落数要求]
 
