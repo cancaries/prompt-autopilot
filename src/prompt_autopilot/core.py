@@ -327,51 +327,223 @@ def analyze_instruction(instruction: str) -> AnalysisResult:
 # Fallback: Structured Prompt Templates (no LLM required)
 # =============================================================================
 
+# ---------------------------------------------------------------------------#
+# Smart default inference engine for fallback prompts
+# Maps common task keywords → reasonable default specifications
+# ---------------------------------------------------------------------------#
+
+# Code task inference map: (keywords) → (language, input, output, constraints)
+_CODE_DEFAULTS = {
+    # Sorting
+    ("排序", "sort"): {
+        "lang": "Python",
+        "input": "整数数组，长度 1-100000，元素范围 0-10^9",
+        "output": "升序排列的整数数组",
+        "constraints": "平均时间复杂度 O(n log n)，空间复杂度 O(log n)",
+        "boundary": "空数组返回空数组，大数组需避免栈溢出",
+        "optional": "归并排序？堆排序？支持自定义比较函数？",
+    },
+    # Binary search
+    ("二分", "binary search"): {
+        "lang": "Python",
+        "input": "有序整数数组 + 目标值",
+        "output": "目标值的下标（不存在返回 -1）",
+        "constraints": "时间复杂度 O(log n)",
+        "boundary": "数组为空、目标不存在、单元素数组",
+        "optional": "返回第一个/最后一个匹配位置？",
+    },
+    # Fibonacci / DP
+    ("斐波那契", "fibonacci", "dp", "动态规划"): {
+        "lang": "Python",
+        "input": "整数 n（0 ≤ n ≤ 1000）",
+        "output": "第 n 个斐波那契数",
+        "constraints": "时间复杂度 O(n)，空间复杂度 O(1)（滚动数组）",
+        "boundary": "n=0, n=1, n 特别大（考虑大数）",
+        "optional": "记忆化递归？矩阵快速幂？",
+    },
+    # Login / Auth
+    ("登录", "login", "登陆", "auth"): {
+        "lang": "Python + Flask",
+        "input": "用户名（字符串）+ 密码（字符串）",
+        "output": "成功返回 JWT token，失败返回错误信息",
+        "constraints": "密码需 bcrypt 哈希存储，JWT 有效期 24h",
+        "boundary": "用户不存在、密码错误、账号锁定",
+        "optional": "第三方登录（微信/Google）？注册功能？",
+    },
+    # API endpoint
+    ("api", "接口", "endpoint", "rest"): {
+        "lang": "Python + Flask / FastAPI",
+        "input": "HTTP 请求参数（JSON/query/path）",
+        "output": "JSON 响应 {code, message, data}",
+        "constraints": "RESTful 规范，状态码正确，参数校验",
+        "boundary": "参数缺失、格式错误、未授权访问",
+        "optional": "分页？限流？文档（Swagger）？",
+    },
+    # Linked list
+    ("链表", "linked list"): {
+        "lang": "Python",
+        "input": "链表节点值数组 + 操作类型",
+        "output": "操作后的链表或结果值",
+        "constraints": "需处理环检测、O(1) 空间（不允许修改节点）",
+        "boundary": "空链表、单节点、环、循环链表",
+        "optional": "反转链表？检测环？合并有序链表？",
+    },
+    # Tree / BST
+    ("树", "tree", "bst", "二叉树"): {
+        "lang": "Python",
+        "input": "树的节点值列表（如层序数组）",
+        "output": "遍历结果或操作结果",
+        "constraints": "递归实现需防栈溢出，大树用迭代",
+        "boundary": "空树、单节点、退化为链表",
+        "optional": "前/中/后序遍历？层序遍历？求深度？",
+    },
+    # Hash / Dict
+    ("哈希", "hash", "字典", "dict"): {
+        "lang": "Python",
+        "input": "键值对数组或字符串",
+        "output": "哈希表或操作结果",
+        "constraints": "处理哈希冲突（链地址法或开放地址）",
+        "boundary": "键不存在、重复键、负载因子过大",
+        "optional": "自定义哈希函数？扩容策略？",
+    },
+    # Graph
+    ("图", "graph", "最短路径", "dijkstra"): {
+        "lang": "Python",
+        "input": "邻接表或邻接矩阵表示的图",
+        "output": "最短路径长度或路径本身",
+        "constraints": "时间复杂度 O((V+E) log V) for Dijkstra",
+        "boundary": "图不连通、负权边、单源或多源",
+        "optional": "BFS？Floyd-Warshall？拓扑排序？",
+    },
+    # Stack / Queue
+    ("栈", "stack", "队列", "queue"): {
+        "lang": "Python",
+        "input": "操作序列或初始数据",
+        "output": "操作后的栈/队列状态或顶部/队首元素",
+        "constraints": "线程安全？容量限制？",
+        "boundary": "空栈/空队列、溢出",
+        "optional": "单调栈？循环队列？优先队列（堆）？",
+    },
+    # Database / SQL
+    ("数据库", "sql", "db", "增删改查", "crud"): {
+        "lang": "Python + SQL",
+        "input": "表结构 + 查询条件或数据",
+        "output": "查询结果或受影响的行数",
+        "constraints": "防止 SQL 注入，使用参数化查询",
+        "boundary": "表为空、结果为空、并发写入冲突",
+        "optional": "事务？索引？分页查询？",
+    },
+    # Cache
+    ("缓存", "cache", "lru"): {
+        "lang": "Python",
+        "input": "缓存容量 + 操作序列（get/put）",
+        "output": "LRU 缓存操作结果",
+        "constraints": "O(1) 时间复杂度",
+        "boundary": "容量满、key 不存在、相同 key 重复访问",
+        "optional": "LFU？TTL 过期？并发缓存？",
+    },
+    # String manipulation
+    ("字符串", "string", "正则", "regex"): {
+        "lang": "Python",
+        "input": "输入字符串",
+        "output": "处理后的字符串",
+        "constraints": "Unicode 处理、大字符串高效",
+        "boundary": "空字符串、特殊字符、超长输入",
+        "optional": "正则表达式？KMP？马拉车算法？",
+    },
+}
+
+
+def _infer_code_defaults(instruction: str) -> dict | None:
+    """Try to find a matching default spec for the instruction."""
+    instruction_lower = instruction.lower()
+    for keywords, spec in _CODE_DEFAULTS.items():
+        if any(kw in instruction_lower for kw in keywords):
+            return spec
+    return None
+
+
 def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
-    """不用 LLM 时，生成结构化的 prompt 文本模板。"""
+    """
+    不用 LLM 时，生成结构化的 prompt 文本模板。
+    对于常见任务类型，智能推断合理的默认规范，减少用户填写负担。
+    """
     if instruction_type == "code":
-        return f"""优化后的编程指令：
+        defaults = _infer_code_defaults(instruction)
+        if defaults:
+            # Smart inferred fallback — has real content
+            return f"""优化后的编程指令：
+
+【任务】
+用 {defaults['lang']} 实现{instruction}
+
+【约束】
+- 输入：{defaults['input']}
+- 输出：{defaults['output']}
+- 性能：{defaults['constraints']}
+- 边界：{defaults['boundary']}
+
+【可选补充】
+- {defaults['optional']}"""
+        else:
+            # Generic fallback — still better than pure blanks
+            return f"""优化后的编程指令：
 
 【任务】
 {instruction}
 
-【要求补充】
-- 编程语言/框架：
-- 输入规格：
-- 输出规格：
-- 约束条件：
-- 性能要求（如有）："""
+【约束】（以下请补充或确认）
+- 输入规格：[数据类型、格式、范围]
+- 输出规格：[数据类型、格式]
+- 性能要求：[如有，如 时间复杂度 O(n log n)]
+- 边界情况：[空输入、异常值、大规模数据]
+
+【可选补充】
+- 编程语言/框架偏好？
+- 测试用例需要覆盖哪些场景？"""
     elif instruction_type == "writing":
         return f"""优化后的写作指令：
 
 【任务】
 {instruction}
 
-【要求补充】
-- 受众是谁：
-- 写作目的：
-- 语气风格：
-- 核心要点："""
+【约束】
+- 受众：[谁会读这篇？年龄/职业/背景]
+- 写作目的：[说服/通知/解释/记录？]
+- 语气风格：[正式/亲切/专业/轻松]
+- 核心要点：[必须传达的 2-3 个要点]
+
+【可选补充】
+- 字数要求或篇幅限制？
+- 结构偏好（总分总/清单/时间顺序）？"""
     elif instruction_type == "explanation":
         return f"""优化后的解释指令：
 
 【任务】
 {instruction}
 
-【要求补充】
-- 受众背景：
-- 解释深度：
-- 核心概念：
-- 类比场景："""
+【约束】
+- 受众背景：[年龄、技术背景、认知水平]
+- 解释深度：[扫盲科普/中等理解/深入专业]
+- 核心概念：[1-3 个必须讲清楚的概念]
+
+【可选补充】
+- 需要什么类比/生活场景？
+- 常见误解要提前澄清吗？"""
     else:
         return f"""优化后的指令：
 
+【任务】
 {instruction}
 
-【补充背景】
-- 执行者：
-- 目标：
-- 约束："""
+【约束】
+- 执行者：[AI/专家/助手？]
+- 目标：[明确要达到什么]
+- 约束条件：[如有限制]
+
+【可选补充】
+- 质量标准：[什么样的结果算好？]
+- 参考案例：[有的话可以提供]"""
 
 
 # =============================================================================
@@ -650,35 +822,163 @@ Requirements:
 # =============================================================================
 
 def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> EvaluationResult:
-    """Evaluate based on whether the output matches the task complexity."""
-    complexity = analysis["task_complexity"]
-    
-    if version["is_direct"] and complexity == "simple":
-        # Direct output for simple task = perfect
-        return {
-            "scores": {"clarity": 10, "specificity": 8, "completeness": 8},
-            "overall": 9.0,
-            "grade": "A"
-        }
-    elif not version["is_direct"] and complexity == "simple":
-        # Template for simple task = overkill
-        return {
-            "scores": {"clarity": 4, "specificity": 5, "completeness": 6},
-            "overall": 5.0,
-            "grade": "C"
-        }
-    elif version["is_direct"]:
-        return {
-            "scores": {"clarity": 7, "specificity": 7, "completeness": 7},
-            "overall": 7.0,
-            "grade": "B"
-        }
+    """
+    Content-based evaluation that actually differentiates quality.
+
+    Scoring rules:
+    - Has real content (not blank placeholder) → +2/section
+    - Constraints are specific & quantified → +2/section
+    - Language/framework is explicit → +1/section
+    - Blank placeholder → -1/placeholder
+    - Has optional/follow-up prompts → +0.5 (engagement signal)
+    """
+    template = version["template"]
+    instr_type = analysis["instruction_type"]
+
+    clarity_score = 5
+    specificity_score = 5
+    completeness_score = 5
+
+    # ---- Blank placeholder penalty ----
+    placeholder_count = template.count("：") + template.count(":")
+    blank_phrases = [
+        "[请补充]", "[描述]", "[填写]", "[如 有]", "[可选]",
+        "[你决定]", "[未知]", "[自定义]", "______",
+        "[数据类型、格式、范围]",  # generic code placeholder
+        "[数据类型]", "[格式]", "[范围]",
+    ]
+    for phrase in blank_phrases:
+        if phrase in template:
+            blank_penalty = template.count(phrase)
+            specificity_score -= blank_penalty
+            completeness_score -= blank_penalty
+
+    # ---- Content presence bonus ----
+    # For code tasks: check for real input/output/constraint specs
+    if instr_type == "code":
+        # Has non-generic input spec
+        if _has_real_content(template, ["输入", "input", "参数"]):
+            specificity_score += 2
+            completeness_score += 1
+        # Has non-generic output spec
+        if _has_real_content(template, ["输出", "output", "返回"]):
+            specificity_score += 1
+            completeness_score += 1
+        # Has quantified constraints (O(n), 复杂度, 范围)
+        if _has_quantified_constraint(template):
+            specificity_score += 2
+        # Has explicit language
+        if _has_explicit_language(template, ["python", "javascript", "java", "go", "rust", "sql"]):
+            specificity_score += 1
+        # Has boundary handling
+        if _has_real_content(template, ["边界", "edge", "空输入", "异常"]):
+            completeness_score += 1
+        # Has optional follow-up prompts
+        if "【可选" in template or "【可选补充" in template or "optional" in template.lower():
+            completeness_score += 0.5
+
+    elif instr_type == "writing":
+        if _has_real_content(template, ["受众", "读者", "audience"]):
+            specificity_score += 2
+            completeness_score += 1
+        if _has_real_content(template, ["写作目的", "核心", "key point"]):
+            specificity_score += 1
+            completeness_score += 1
+        if _has_real_content(template, ["语气", "tone", "风格"]):
+            specificity_score += 1
+
+    elif instr_type == "explanation":
+        if _has_real_content(template, ["受众", "背景", "audience"]):
+            specificity_score += 2
+            completeness_score += 1
+        if _has_real_content(template, ["解释深度", "depth", "层次"]):
+            specificity_score += 1
+        if _has_real_content(template, ["类比", "analogy"]):
+            completeness_score += 1
+
+    # ---- Clamp scores ----
+    clarity_score = max(1, min(10, clarity_score))
+    specificity_score = max(1, min(10, specificity_score))
+    completeness_score = max(1, min(10, completeness_score))
+
+    # ---- Overall score (weighted average) ----
+    overall = round(
+        clarity_score * 0.25 + specificity_score * 0.40 + completeness_score * 0.35,
+        2
+    )
+
+    # ---- Grade ----
+    if overall >= 8.0:
+        grade = "A"
+    elif overall >= 6.5:
+        grade = "B"
+    elif overall >= 5.0:
+        grade = "C"
     else:
-        return {
-            "scores": {"clarity": 6, "specificity": 6, "completeness": 7},
-            "overall": 6.5,
-            "grade": "B"
-        }
+        grade = "D"
+
+    return {
+        "scores": {
+            "clarity": clarity_score,
+            "specificity": specificity_score,
+            "completeness": completeness_score,
+        },
+        "overall": overall,
+        "grade": grade,
+    }
+
+
+def _has_real_content(template: str, keywords: list[str]) -> bool:
+    """Check if template contains non-generic content around given keywords."""
+    generic_phrases = {
+        "[数据类型、格式、范围]", "[描述]", "[填写]", "[请补充]",
+        "[数据类型]", "[格式]", "[范围]", "______", "[如 有]",
+    }
+    template_lower = template.lower()
+    for kw in keywords:
+        idx = template_lower.find(kw.lower())
+        if idx == -1:
+            continue
+        # Check surrounding 20 chars for generic placeholders
+        start = max(0, idx - 5)
+        end = min(len(template), idx + 20)
+        snippet = template[start:end]
+        # If snippet contains generic placeholder, count as empty
+        for ph in generic_phrases:
+            if ph in snippet:
+                return False
+        return True
+    return False
+
+
+def _has_quantified_constraint(template: str) -> bool:
+    """Check if template has quantified constraints like O(n), ranges, limits."""
+    quantified_patterns = [
+        r"O\([^)]+\)",       # O(n log n), O(n^2)
+        r"\d+\s*-\s*\d+", # 1-100000
+        r"\d+\s*个",        # 100万个
+        r"\d+k",             # 10k, 100k
+        r"\d+M",             # 1M
+        r"时间复杂度",
+        r"空间复杂度",
+        r"\d+\s*小时",
+        r"\d+\s*分钟",
+        r"\d+\s*秒",
+    ]
+    import re
+    for pat in quantified_patterns:
+        if re.search(pat, template, re.IGNORECASE):
+            return True
+    return False
+
+
+def _has_explicit_language(template: str, langs: list[str]) -> bool:
+    """Check if template explicitly names a programming language."""
+    template_lower = template.lower()
+    for lang in langs:
+        if lang in template_lower:
+            return True
+    return False
 
 def recommend_version(evaluations: list[EvaluationResult], analysis: AnalysisResult) -> int:
     """Recommend based on task complexity."""
