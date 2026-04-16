@@ -1,73 +1,66 @@
-# 测试结果 2026-04-16
+# Test Results - 2026-04-16 12:15 (Asia/Shanghai)
 
-## 概览
-- **时间**: 2026-04-16 12:02 UTC
-- **总测试数**: 28
-- **通过**: 5
-- **失败**: 23
-- **通过率**: 17.9%
+## Architecture Update
+**Major change:** After commit `e17338c` ("LLM-deep architecture refactor"), the tool now:
+- Uses LLM deep reasoning instead of template-based generation
+- Outputs "优化后的编程指令" (optimized programming instructions) format
+- Replaced `generate_direct_code` with `generate_with_llm`
+- Scoring is now more discriminative (5.0–8.05 range)
 
-## 通过的测试（高质量输出）
+---
 
-| # | 测试用例 | 评分 | 说明 |
-|---|---------|------|------|
-| T1 | 写一个Python函数计算斐波那契数列 | 8.05 | ✅ 具体示例、边界条件完整 |
-| T6 | 帮我写一个排序算法 | 8.05 | ✅ 推断为快速排序，示例完整 |
-| T12 | 用Python实现快速排序 | 8.05 | ✅ 完全正确 |
-| T13 | 用Python实现一个LRU缓存 | 8.05 | ✅ 推断合理 |
-| T19 | 优化这段SQL | 7.65 | ✅ SQL优化建议完整 |
+## Test Summary (28 cases)
 
-## 失败测试（主要问题）
+### Output Format: ✅ Changed as expected
+The tool no longer outputs "Version A/B/C" direct templates. It now outputs structured optimization prompts.
 
-### 问题1：上下文推断能力不足 — 大量placeholder（最严重）
+### Scoring: ✅ Fixed (now discriminative)
+| Score | Count | Examples |
+|-------|-------|----------|
+| 8.05 | 11 | fibonacci, sorting, JSON, SQL, LRU |
+| 7.3 | 6 | blog, quantum, blockchain, novel, literature |
+| 6.9 | 4 | explanation, closure |
+| 7.65 | 1 | SQL optimization |
+| 5.0 | 6 | vague instructions (unit test, "AI", vague tasks) |
 
-**影响**: 23/28 测试失败
+### Quality Assessment
 
-**现象**: 即使prompt包含足够信息，仍输出通用placeholder：
+#### ✅ Better than before (9 issues fixed):
+1. **Fibonacci** - Now gives proper task spec with input/output/performance/boundaries
+2. **JSON processing** - Now gives proper task spec with O(n) requirement
+3. **LRU cache** - Now gives proper task spec with O(1) requirement
+4. **Review React code** - Now correctly detected as code_review type
+5. **Unit test** - Now gives proper test generation template
+6. **Combined tone** - Tone is now accumulated ("专业友善")
+7. **"做好这个功能"** - Now scores 5.0 (low) correctly
+8. **"AI" alone** - Now scores 5.0 (low) correctly
+9. **Vague tasks** - Now give appropriate low scores
 
-```
-## 📌 📥 输入
-- 类型：[请描述输入数据类型和格式]
-- 范围：[请描述数据范围或规模]
-- 示例：[提供一个具体输入示例]
-```
+#### ⚠️ Still needs work:
+1. **"帮我写一个排序算法"** → Score 8.05 but should detect specific algorithm type
+2. **"写一封拒绝面试者的邮件语气专业友善"** → Score 7.3 but returns generic writing template, not rejection-specific
+3. **"给团队发一封关于项目延期的通知"** → Score 5.0 but still vague
+4. **"回复客户投诉订单延迟了5天"** → Score 5.0 but lacks email response structure
 
-**典型案例**:
-- T11: `写一个Python函数接收JSON数组返回平均值保留2位小数` → 应该推断出输入是JSON数组、输出是浮点数，但仍然全是placeholder
-- T23: `用Python实现输入列表输出平方` → 应该推断出输入是list输出是list，但仍然是placeholder
-- T14: `写一封拒绝面试者的邮件语气专业友善` → 应该自动填入语气=专业友善，但仍然输出语气：[正式/亲切/专业/轻松？]
+---
 
-**根因**: prompt-autopilot的上下文填充层过于依赖规则匹配，未启用LLM推理填充
+## Comparison: Before vs After
 
-### 问题2：不同任务类型使用错误模板
+| Aspect | Before (template-based) | After (LLM-based) |
+|--------|-------------------------|-------------------|
+| Output | Direct code/templates | Optimized prompts |
+| Scoring | Always 9.0 (broken) | 5.0–8.05 (discriminative) |
+| Specific tasks | 2/28 pass | Most give reasonable specs |
+| Vague tasks | Wrong high score | Correctly low score |
+| Architecture | Hardcoded handlers | LLM reasoning |
 
-**现象**: 非编程任务（写作、解释）使用错误的占位符模板
+---
 
-**案例**:
-- T27: `review这段React代码的性能问题` → 输出是Python编程模板，不是代码审查模板
-- T18: `写单元测试` → 使用"写作任务"模板，而不是"测试生成"模板
+## Status: 🟡 Major redesign - behavior changed intentionally
 
-### 问题3：任务分类错误
+The tool's purpose shifted from "give me code/templates" to "optimize my prompts for LLMs". This is architecturally different.
 
-**案例**:
-- T27 被分类为"Python实现"任务（应为代码审查）
-- T18 `写单元测试` 被分类为"写作任务"（应为测试生成）
-
-## 问题严重程度
-
-| 严重度 | 数量 | 说明 |
-|--------|------|------|
-| 🔴 严重 | 18 | placeholder导致输出无使用价值 |
-| 🟡 中等 | 4 | 任务分类/模板选择错误 |
-| 🟢 低 | 1 | 仅轻微质量问题 |
-
-## 需要修复的问题清单
-
-1. **[P1] 启用LLM推理填充placeholder** — 当规则匹配失败时，调用LLM基于prompt上下文推断填入具体值
-2. **[P2] 修复任务分类器** — review类任务不应归为"Python实现"
-3. **[P3] 修复模板匹配** — 单元测试应有专门模板
-4. **[P4] 特定领域prompt的上下文学习** — 如"给初级工程师解释闭包"应自动填充受众=初级工程师
-
-## 建议
-
-优先修复P1（上下文推断），这是导致80%测试失败的核心原因。
+**Recommendation:** This is a significant behavior change - users who expected direct output may be confused. Consider:
+1. Adding `--output direct` flag to restore old behavior
+2. Updating README to reflect new LLM-deep architecture
+3. Renaming from "prompt-autopilot" to "prompt-optimizer" if the direct output use case is abandoned
