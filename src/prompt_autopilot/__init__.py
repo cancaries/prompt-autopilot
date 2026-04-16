@@ -19,6 +19,16 @@ from .core import (
     list_templates,
     search_templates,
 )
+from .library import (
+    save_prompt,
+    load_prompt,
+    list_prompts,
+    search_prompts,
+    delete_prompt,
+    use_prompt,
+    find_similar,
+    update_prompt,
+)
 from .display import display_result, DisplayStyle
 
 __all__ = [
@@ -35,6 +45,14 @@ __all__ = [
     "save_template",
     "list_templates",
     "search_templates",
+    "save_prompt",
+    "load_prompt",
+    "list_prompts",
+    "search_prompts",
+    "delete_prompt",
+    "use_prompt",
+    "find_similar",
+    "update_prompt",
     "display_result",
     "DisplayStyle",
 ]
