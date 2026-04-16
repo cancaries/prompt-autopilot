@@ -256,15 +256,107 @@ def detect_task_complexity(instruction: str, instruction_type: str) -> str:
     # Medium length with multiple requirements = medium
     return "medium"
 
+def _strip_emoji(text: str) -> str:
+    """Remove emoji characters before classification to prevent interference.
+    
+    Bug 5 fix: removed overly broad \U000024C2-\U0001F251 range which was
+    incorrectly matching CJK characters (all Chinese chars fell in this range).
+    Only includes genuine emoji Unicode blocks.
+    """
+    import re
+    # Only target emoji Unicode blocks - NOT broad ranges that include CJK
+    # See https://unicode.org/Public/emoji/latest/emoji-data.txt
+    emoji_pattern = re.compile(
+        "[\U0001F600-\U0001F64F"      # Emoticons
+        "\U0001F300-\U0001F5FF"        # Misc Symbols and Pictographs
+        "\U0001F680-\U0001F6FF"        # Transport and Map Symbols
+        "\U0001F1E0-\U0001F1FF"        # Flags
+        "\U00002702-\U000027B0"        # Dingbats
+        "\U0001F900-\U0001F9FF"        # Supplemental Symbols and Pictographs
+        "\U0001FA00-\U0001FA6F"        # Chess, etc.
+        "\U0001FA70-\U0001FAFF"        # Symbols and Pictographs Extended-A
+        "\U00002600-\U000026FF"        # Misc Technical (includes some symbols, not CJK)
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub("", text)
+
+
+def _extract_core_concept(instruction: str) -> str:
+    """
+    Extract the core concept from an explanation-style instruction.
+    Strips common explanatory prefixes/suffixes to isolate the real topic.
+    
+    "给初级工程师解释什么是闭包" → "闭包"
+    "用通俗语言介绍Python装饰器" → "Python装饰器"
+    "告诉我有关机器学习的一切" → "机器学习"
+    "深入讲解Go语言协程" → "Go语言协程"
+    "介绍一下大模型幻觉问题" → "大模型幻觉问题"
+    "普及一下区块链技术" → "区块链技术"
+    "解释一下什么是HTTP/2" → "HTTP/2"
+    "介绍一下量子计算原理" → "量子计算原理"
+    """
+    text = instruction.strip()
+    
+    # Patterns to strip from the beginning (explanatory phrases)
+    strip_prefixes = [
+        "给初级工程师解释什么是",
+        "给工程师解释什么是",
+        "给程序员解释什么是",
+        "给小白解释什么是",
+        "解释什么是",
+        "解释一下什么是",
+        "解释一下",
+        "介绍一下",
+        "通俗地介绍",
+        "用通俗语言介绍",
+        "深入讲解",
+        "讲解一下",
+        "普及一下",
+        "告诉你有关",
+        "讲讲",
+        "介绍一下",
+        "告诉我有关",
+        "说说什么是",
+        "说一说",
+    ]
+    
+    for prefix in strip_prefixes:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    
+    # Patterns to strip from the end
+    strip_suffixes = [
+        "的定义",
+        "的定义、原理",
+        "的定义、原理、应用",
+        "的原理",
+        "的原理和应用",
+        "的概念",
+        "的相关知识",
+        "的一切",
+    ]
+    
+    for suffix in strip_suffixes:
+        if text.endswith(suffix):
+            text = text[:-len(suffix)]
+            break
+    
+    return text.strip() if text.strip() else instruction
+
+
 def detect_instruction_type(instruction: str) -> str:
-    instruction_lower = instruction.lower()
+    # Strip emoji BEFORE classification to prevent interference (Bug 5 fix)
+    text = _strip_emoji(instruction)
+    text_lower = text.lower()
     
     # Code review / code analysis (check BEFORE generic code keywords)
     code_review_keywords = [
         "review", "review代码", "代码review", "cr", "代码审查", "代码分析",
         "性能review", "review这段", "代码审查", "review一下", "review下"
     ]
-    if any(word in instruction_lower for word in code_review_keywords):
+    if any(word in text_lower for word in code_review_keywords):
         return "code_review"
     
     # Test generation (check BEFORE writing keywords)
@@ -272,7 +364,7 @@ def detect_instruction_type(instruction: str) -> str:
         "单元测试", "unit test", "测试用例", "写测试", "test case",
         "pytest", "jest", "testing", "测试代码"
     ]
-    if any(word in instruction_lower for word in test_generation_keywords):
+    if any(word in text_lower for word in test_generation_keywords):
         return "test_generation"
     
     # Code (generic)
@@ -283,40 +375,60 @@ def detect_instruction_type(instruction: str) -> str:
         "实现", "编程", "代码", "class", "method", "module",
         "lr", "cache", "queue", "stack", "hash", "tree", "graph",
         "登录", "注册", "用户", "验证", "auth", "login", "register",
-        "斐波那契", "fibonacci", "quicksort", "mergesort"
+        "斐波那契", "fibonacci", "quicksort", "mergesort",
+        # Bug 5 fix: add Chinese "脚本" to code_keywords so game scripts are classified as code
+        "脚本", "代码脚本", "游戏脚本", "程序脚本",
     ]
-    if any(word in instruction_lower for word in code_keywords):
+    if any(word in text_lower for word in code_keywords):
         return "code"
     
     # ---- Email sub-type detection (before generic writing) ----
     # More specific → less specific order to avoid false positives
-    if any(w in instruction_lower for w in ["拒绝", "谢绝", "无法录用", "面试结果", "不录用"]):
+    if any(w in text_lower for w in ["拒绝", "谢绝", "无法录用", "面试结果", "不录用"]):
         return "rejection_email"
-    if any(w in instruction_lower for w in ["道歉", "sorry", "apologize", "致歉"]):
+    if any(w in text_lower for w in ["道歉", "sorry", "apologize", "致歉"]):
         return "apology_email"
-    if any(w in instruction_lower for w in ["周报", "月报", "日报", "进度汇报", "项目报告"]):
+    if any(w in text_lower for w in ["周报", "月报", "日报", "进度汇报", "项目报告"]):
         return "report_email"
-    if any(w in instruction_lower for w in ["通知", "notification", "告知", "通报"]):
+    if any(w in text_lower for w in ["通知", "notification", "告知", "通报"]):
         return "notification_email"
-    if any(w in instruction_lower for w in ["投诉", "complaint", "客户投诉", "申诉"]):
+    if any(w in text_lower for w in ["投诉", "complaint", "客户投诉", "申诉"]):
         return "complaint_email"
+    
+    # Creative writing - specific check BEFORE generic writing (Bug 3 fix)
+    creative_writing_keywords = [
+        "小说", "fiction", "story", "开头", "科幻", "奇幻", "悬疑",
+        "散文", "poetry", "poem", "短篇", "长篇", "故事", "narrative",
+        "脚本", "scenario", "剧本", "台词", "dialogue"
+    ]
+    if any(w in text_lower for w in creative_writing_keywords):
+        return "creative_writing"
+    
+    # Academic writing - specific check BEFORE generic writing (Bug 4 fix)
+    academic_writing_keywords = [
+        "文献综述", "摘要", "abstract", "论文", "学术", "研究", "研究论文",
+        "dissertation", "thesis", "学术论文", "sci", "期刊文章",
+        "literature review", "research paper"
+    ]
+    if any(w in text_lower for w in academic_writing_keywords):
+        return "academic_writing"
     
     # Writing (generic)
     writing_keywords = [
         "write", "compose", "draft", "email", "letter", "article", "blog",
-        "写", "文章", "邮件", "文案", "汇报", "报告", "总结", "摘要"
+        "写", "文章", "邮件", "文案", "汇报", "报告", "总结"
     ]
-    if any(word in instruction_lower for word in writing_keywords):
+    if any(word in text_lower for word in writing_keywords):
         return "writing"
     
     # Explanation
-    if any(word in instruction_lower for word in [
+    if any(word in text_lower for word in [
         "explain", "what", "how", "why", "difference", "解释", "说明", "是什么", "什么是", "为什么", "介绍"
     ]):
         return "explanation"
     
     # Question
-    if "?" in instruction or "吗" in instruction or "？" in instruction:
+    if "?" in text or "吗" in text or "？" in text:
         return "question"
     
     return "general"
@@ -658,9 +770,11 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             "analogy": "用生活中的例子说明",
             "tone": "通俗易懂，适合科普",
         }
-        inst_lower = instruction.lower()
+        # Strip emoji for analysis to prevent interference
+        inst_stripped = _strip_emoji(instruction)
+        inst_lower = inst_stripped.lower()
 
-        # 提取主题关键词
+        # 提取主题关键词 (expanded mapping)
         topic_keywords = {
             "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
             "区块链": "区块链", "比特币": "区块链",
@@ -671,14 +785,27 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             "物联网": "物联网", "5G": "5G",
             "网络安全": "网络安全", "黑客": "网络安全",
             "量子计算": "量子计算", "量子": "量子计算",
+            "blockchain": "区块链 (Blockchain)", "bitcoin": "比特币",
+            "machine learning": "机器学习", "deep learning": "深度学习",
+            "llm": "大语言模型", "cloud computing": "云计算",
+            "quantum computing": "量子计算", "iot": "物联网",
         }
         for kw, label in topic_keywords.items():
-            if kw in inst_lower or kw in instruction:
+            if kw in inst_lower or kw in inst_stripped:
                 info["topic"] = label
                 break
         if info["topic"] is None:
-            # 尝试用前20个字作为主题摘要
-            info["topic"] = instruction[:20].strip(" ，、.") or "该主题"
+            # Bug 1 fix: use stripped text (no emoji), and for English preserve full words
+            # Use first 3-5 significant words as topic summary
+            words = inst_stripped.split()
+            if len(words) <= 3:
+                info["topic"] = inst_stripped
+            else:
+                # Take first 5 words max to avoid overly long topics
+                info["topic"] = " ".join(words[:5])
+            # If still nothing, use a generic label
+            if not info["topic"] or info["topic"].strip(" ，、.") == "":
+                info["topic"] = "该主题"
 
         # 推断深度和风格
         if any(w in inst_lower for w in ["专业", "深入", "高级", "源码", "原理"]):
@@ -715,8 +842,8 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
         elif any(w in inst_lower for w in ["PPT", "演示", "演讲"]):
             info["format"] = "演示文稿"
 
-        # 推断语言
-        if any(w in instruction for w in ["英文", "English", "用英语", "write in english"]):
+        # 推断语言 (Bug 1 fix: use stripped text for language inference)
+        if any(w in inst_stripped for w in ["英文", "English", "用英语", "write in english"]):
             info["language"] = "英文"
 
         # 推断语气
@@ -841,6 +968,32 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 {boundary}"""
 
             # Generic code fallback with real defaults
+            # Bug 2 fix: extract instruction-specific output requirements
+            instr_lower = instruction.lower()
+            specific_reqs = []
+            if any(w in instr_lower for w in ['平均', 'average', 'mean']):
+                specific_reqs.append('计算平均值')
+            if any(w in instr_lower for w in ['保留', 'round', 'decimal', 'precision']):
+                import re
+                prec_match = re.search(r'(\d+)\s*位|保留(\d+)', instr_lower)
+                if prec_match:
+                    digits = prec_match.group(1) or prec_match.group(2)
+                    specific_reqs.append(f'保留 {digits} 位小数')
+                else:
+                    specific_reqs.append('保留指定小数位数')
+            if any(w in instr_lower for w in ['求和', 'sum', '合计']):
+                specific_reqs.append('计算总和')
+            if any(w in instr_lower for w in ['最大', 'max', '最小', 'min']):
+                specific_reqs.append('找最大/最小值')
+            if any(w in instr_lower for w in ['去重', 'unique', 'distinct']):
+                specific_reqs.append('去重处理')
+            if any(w in instr_lower for w in ['排序', 'sort', '升序', '降序']):
+                specific_reqs.append('排序处理')
+            
+            output_desc = defaults.get('output', '根据任务目标确定')
+            if specific_reqs:
+                output_desc = ' + '.join(specific_reqs)
+            
             return f"""## 🎯 任务
 用 {lang} 实现：{task_desc}
 
@@ -848,7 +1001,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - {defaults.get('input', '由调用方提供')}
 
 ## 📤 输出
-- {defaults.get('output', '根据任务目标确定')}
+- {output_desc}
 
 ## ⚡ 性能要求
 {perf_section}
@@ -1074,6 +1227,66 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 
 [姓名] | [部门] | [日期]"""
 
+    # ---- Creative Writing Template (Bug 3 fix) ----
+    elif instruction_type == "creative_writing":
+        info = _extract_info(instruction)
+        topic = info["topic"]
+        return f"""## 🎯 创作任务
+{instruction}
+
+## 📖 题材与形式
+- 类型：[小说/散文/短篇/科幻/奇幻/悬疑/剧本/其他]
+- 风格：[如 轻松幽默/紧张悬疑/文艺小清新/硬核科幻]
+- 视角：[第一人称/第三人称/上帝视角/多视角]
+
+## 👥 目标读者
+- 受众群体：{info['audience']}
+- 期待体验：读者读完后的情感共鸣或收获
+
+## 🏗️ 结构要求
+- 开头：先声夺人，从第一句话就抓住读者
+- 发展：通过冲突/情节推进故事
+- 结尾：令人回味/出乎意料/留白
+
+## ✍️ 写作风格
+- 语气：{info['tone']}
+- 语言：{info['language']}
+- 篇幅：短篇 1000-3000 字 / 中篇 5000-10000 字 / 长篇（章节大纲）
+
+## 🎬 参考场景（可选）
+- 设定背景：[如 22世纪火星城市 / 近未来东京 / 赛博朋克上海]
+- 关键元素：[如有特定元素必须包含]"""
+
+    # ---- Academic Writing Template (Bug 4 fix) ----
+    elif instruction_type == "academic_writing":
+        info = _extract_info(instruction)
+        topic = info["topic"]
+        return f"""## 🎯 学术写作任务
+{instruction}
+
+## 📄 文章类型
+- 类型：[文献综述/研究摘要/会议论文/学位论文章节/期刊文章]
+- 学术领域：[如 计算机科学/医学/经济学/心理学]
+- 目标期刊/会议：[如有任何要求]
+
+## 📋 摘要结构（按顺序）
+1. **背景**（1-2句）：该领域现状和研究空白
+2. **目的/研究问题**（1句）：本文要解决什么问题
+3. **方法**（2-3句）：如何开展的（数据集/模型/实验/分析）
+4. **主要发现**（2-3句）：最重要的结果（量化优先）
+5. **结论**（1-2句）：意义、局限性、未来方向
+
+## ✍️ 写作规范
+- 语言：{info['language']}
+- 语气：学术严谨、客观、避免主观夸张
+- 时态：方法部分用过去时，发现部分用现在时
+- 篇幅：摘要通常 150-300 字（期刊要求为准）
+
+## ✅ 质量标准
+- 信息密度高，每句都有实质内容
+- 无废话，不解释常识
+- 缩写首次使用需展开"""
+
     elif instruction_type == "writing":
         info = _extract_info(instruction)
         topic = info["topic"]
@@ -1100,26 +1313,28 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - 结尾：总结要点，行动号召或思考引导"""
     elif instruction_type == "explanation":
         info = _extract_info(instruction)
+        # Bug 6 fix: use _extract_core_concept to get clean concept name
+        core_concept = _extract_core_concept(instruction)
         topic = info["topic"]
         return f"""## 🎯 解释任务
 {instruction}
 
 ## 👤 受众画像
 - 年龄/职业：{info['audience']}
-- 技术背景：一般读者，对 {topic} 有基本了解
-- 关心什么：{topic} 是什么、如何工作、有什么应用场景
+- 技术背景：一般读者，对 {core_concept} 有基本了解
+- 关心什么：{core_concept} 是什么、如何工作、有什么应用场景
 
 ## 🔬 解释深度
 - 层次：{info['depth']}
-- 核心概念：{topic} 的定义、原理、应用场景
+- 核心概念：{core_concept} 的定义、原理、应用场景
 
 ## 🧩 讲解策略
 - 类比场景：{info['analogy']}
 - 讲解顺序：从已知到未知，逐步深入
 
 ## ✅ 检验理解
-- 读者读完后能回答：{topic} 是什么？有什么应用场景？
-- 常见误解：{topic} 不是万能的，有其适用范围"""
+- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
+- 常见误解：{core_concept} 不是万能的，有其适用范围"""
     else:
         return f"""## 🎯 任务
 {instruction}
@@ -1213,7 +1428,7 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
         "rejection_email", "notification_email", "complaint_email",
         "apology_email", "report_email"
     }
-    SPECIALIZED_TYPES = EMAIL_TYPES | {"writing", "explanation", "code"}
+    SPECIALIZED_TYPES = EMAIL_TYPES | {"writing", "creative_writing", "academic_writing", "explanation", "code"}
 
     versions = []
 
@@ -1236,7 +1451,7 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 
     # Version B: For specialized types, use fallback with more specificity
     # For generic types, use a more detailed version
-    if instr_type in EMAIL_TYPES or instr_type == "writing":
+    if instr_type in EMAIL_TYPES or instr_type in ("writing", "creative_writing", "academic_writing"):
         # Email/writing: fallback template is already comprehensive; add a coaching note
         template_b = generate_fallback_prompt(stripped, instr_type)
         # Add coaching section for more detail
@@ -1294,6 +1509,34 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 - 密码错误 → 提示「密码错误」，不暴露具体原因
 - 账号锁定 → 锁定后需等待 30 分钟"""
         else:
+            # Bug 2 fix: extract specific requirements from instruction to differentiate outputs
+            instr_lower = instruction.lower()
+            specific_output = defaults.get('output', '根据任务目标确定')
+            # Extract specific requirements mentioned in the instruction
+            specific_reqs = []
+            if any(w in instr_lower for w in ['平均', 'average', 'mean']):
+                specific_reqs.append('计算平均值')
+            if any(w in instr_lower for w in ['保留', 'round', '小数', 'decimal', 'precision']):
+                # Try to extract precision number
+                import re
+                prec_match = re.search(r'(\d+)\s*位|保留(\d+)', instr_lower)
+                if prec_match:
+                    digits = prec_match.group(1) or prec_match.group(2)
+                    specific_reqs.append(f'保留 {digits} 位小数')
+                else:
+                    specific_reqs.append('保留小数位数（指定精度）')
+            if any(w in instr_lower for w in ['求和', 'sum', '合计']):
+                specific_reqs.append('计算总和')
+            if any(w in instr_lower for w in ['最大', 'max', '最小', 'min']):
+                specific_reqs.append('找最大/最小值')
+            if any(w in instr_lower for w in ['去重', 'unique', 'distinct']):
+                specific_reqs.append('去重处理')
+            if any(w in instr_lower for w in ['排序', 'sort', '升序', '降序']):
+                specific_reqs.append('排序处理')
+            
+            if specific_reqs:
+                specific_output = ' + '.join(specific_reqs)
+            
             template_b = f"""## 🎯 任务
 用 {lang_default} 实现：{stripped}
 
@@ -1301,7 +1544,7 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 - {defaults.get('input', '由调用方提供')}
 
 ## 📤 输出
-- {defaults.get('output', '根据任务目标确定')}
+- {specific_output}
 
 ## ⚡ 性能要求
 - {perf}
@@ -1309,25 +1552,27 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 ## 🛡️ 边界情况
 {boundary}"""
     elif instr_type == "explanation":
+        # Bug 6 fix: use _extract_core_concept to get clean concept name
+        core_concept = _extract_core_concept(stripped)
         if lang == "zh":
             template_b = f"""## 🎯 解释任务
 {stripped}
 
 ## 👤 受众画像
 - 年龄/职业：[目标读者]
-- 技术背景：[他们对主题了解多少]
+- 技术背景：一般读者，对 {core_concept} 有基本了解
 - 关心什么：[最想了解什么]
 
 ## 🔬 解释深度
 - 层次：[扫盲科普/中等理解/深入专业]
-- 核心概念：[1-3 个必须讲清楚的概念]
+- 核心概念：{core_concept} 的定义、原理、应用场景
 
 ## 🧩 讲解策略
 - 类比场景：[用生活中的什么来类比]
 - 讲解顺序：[从已知到未知]
 
 ## ✅ 检验理解
-- 读者读完后能回答：[1-2 个检验问题]
+- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
 - 常见误解：[提前澄清 1 个误区]"""
         else:
             template_b = f"""## 🎯 任务
@@ -1449,11 +1694,13 @@ Explain: {stripped}
 - [边界用例]
 - [异常用例]"""
     elif instr_type == "explanation":
+        # Bug 6 fix: use _extract_core_concept to get clean concept name
+        core_concept = _extract_core_concept(stripped)
         if lang == "zh":
             template_c = f"""你是一位擅长用通俗语言解释复杂概念的老师。请解释：
 
 【解释主题】
-{stripped}
+{core_concept}
 
 【受众画像】
 - 背景：[年龄、职业、技术敏感度]
@@ -1462,14 +1709,14 @@ Explain: {stripped}
 
 【解释深度】
 - 层次：[科普扫盲/中等理解/深入分析]
-- 重点概念：[1-3 个核心概念，必须讲清楚]
+- 重点概念：{core_concept} 的定义、原理、应用场景
 
 【解释策略】
 - 类比场景：[用生活中的什么来类比]
 - 讲解顺序：[从已知到未知]
 
 【检验理解】
-- 读者读完后能回答：[1-2 个检验问题]
+- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
 - 常见误解：[提前澄清 1 个误区]
 
 【扩展阅读】
@@ -1479,7 +1726,7 @@ Explain: {stripped}
             template_c = f"""You are a teacher skilled at explaining complex concepts simply. Explain:
 
 【Topic】
-{stripped}
+{core_concept}
 
 【Audience Profile】
 - Background: [age, profession, tech savviness]
@@ -1488,7 +1735,7 @@ Explain: {stripped}
 
 【Depth】
 - Level: [popular/technical/in-depth]
-- Core concepts: [1-3 must-understand]
+- Core concepts: {core_concept}
 
 【Strategy】
 - Analogy: [real-life scenario]
@@ -1496,6 +1743,16 @@ Explain: {stripped}
 
 【Check Understanding】
 - Key question reader can answer after:"""
+    elif instr_type in ("creative_writing", "academic_writing"):
+        # Use fallback template with advanced coaching
+        template_c = generate_fallback_prompt(stripped, instr_type)
+        template_c += """
+
+## 💡 高级技巧（Version C 进阶）
+- 开头句式：[如何第一句话就抓住读者/审稿人]
+- 节奏把控：[段落长度、节奏变化]
+- 细节密度：[用多少具体例子/数据支撑]
+- 修改建议：[写完后如何自我检审]"""
     else:
         template_c = f"""## 🎯 任务
 {stripped}
@@ -1738,7 +1995,7 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
     # Select the right generation prompt based on instruction type
     if instruction_type == "code":
         user_prompt = CODE_GENERATION_PROMPT.format(instruction=instruction)
-    elif instruction_type == "writing":
+    elif instruction_type in ("writing", "creative_writing", "academic_writing"):
         user_prompt = WRITING_GENERATION_PROMPT.format(instruction=instruction)
     elif instruction_type == "explanation":
         user_prompt = EXPLANATION_GENERATION_PROMPT.format(instruction=instruction)

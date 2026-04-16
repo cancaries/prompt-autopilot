@@ -1,66 +1,113 @@
-# Test Results - 2026-04-16 12:15 (Asia/Shanghai)
+# Test Results - 2026-04-16
 
-## Architecture Update
-**Major change:** After commit `e17338c` ("LLM-deep architecture refactor"), the tool now:
-- Uses LLM deep reasoning instead of template-based generation
-- Outputs "优化后的编程指令" (optimized programming instructions) format
-- Replaced `generate_direct_code` with `generate_with_llm`
-- Scoring is now more discriminative (5.0–8.05 range)
+## Summary
+- **Total**: 28 tests (T1-T28)
+- **Issues Found**: 6 significant bugs
 
 ---
 
-## Test Summary (28 cases)
+## Issues Found
 
-### Output Format: ✅ Changed as expected
-The tool no longer outputs "Version A/B/C" direct templates. It now outputs structured optimization prompts.
+### Issue 1: English Prompt Truncation (T7)
+**Test**: `prompt-autopilot optimize "explain how blockchain works" --style markdown`
 
-### Scoring: ✅ Fixed (now discriminative)
-| Score | Count | Examples |
-|-------|-------|----------|
-| 8.05 | 11 | fibonacci, sorting, JSON, SQL, LRU |
-| 7.3 | 6 | blog, quantum, blockchain, novel, literature |
-| 6.9 | 4 | explanation, closure |
-| 7.65 | 1 | SQL optimization |
-| 5.0 | 6 | vague instructions (unit test, "AI", vague tasks) |
+**Problem**: English prompts get garbled/truncated. The word "blockchain" becomes "blockcha" in multiple places:
+- "对explain how blockcha有基本了解"
+- "explain how blockcha 是什么、如何工作"
 
-### Quality Assessment
-
-#### ✅ Better than before (9 issues fixed):
-1. **Fibonacci** - Now gives proper task spec with input/output/performance/boundaries
-2. **JSON processing** - Now gives proper task spec with O(n) requirement
-3. **LRU cache** - Now gives proper task spec with O(1) requirement
-4. **Review React code** - Now correctly detected as code_review type
-5. **Unit test** - Now gives proper test generation template
-6. **Combined tone** - Tone is now accumulated ("专业友善")
-7. **"做好这个功能"** - Now scores 5.0 (low) correctly
-8. **"AI" alone** - Now scores 5.0 (low) correctly
-9. **Vague tasks** - Now give appropriate low scores
-
-#### ⚠️ Still needs work:
-1. **"帮我写一个排序算法"** → Score 8.05 but should detect specific algorithm type
-2. **"写一封拒绝面试者的邮件语气专业友善"** → Score 7.3 but returns generic writing template, not rejection-specific
-3. **"给团队发一封关于项目延期的通知"** → Score 5.0 but still vague
-4. **"回复客户投诉订单延迟了5天"** → Score 5.0 but lacks email response structure
+**Severity**: High - English prompts fail completely
 
 ---
 
-## Comparison: Before vs After
+### Issue 2: Different Prompts Produce Identical Output (T10 vs T11)
+**Tests**:
+- T10: `写一个Python函数处理JSON数据` 
+- T11: `写一个Python函数接收JSON数组返回平均值保留2位小数`
 
-| Aspect | Before (template-based) | After (LLM-based) |
-|--------|-------------------------|-------------------|
-| Output | Direct code/templates | Optimized prompts |
-| Scoring | Always 9.0 (broken) | 5.0–8.05 (discriminative) |
-| Specific tasks | 2/28 pass | Most give reasonable specs |
-| Vague tasks | Wrong high score | Correctly low score |
-| Architecture | Hardcoded handlers | LLM reasoning |
+**Problem**: Both outputs are IDENTICAL:
+```
+📌 📥 输入
+- JSON 数组或 Python 列表
+
+📌 📤 输出
+- 数值（平均值）
+```
+
+T11 should specifically mention "平均值" and "保留2位小数" as key requirements, but it's the same generic output as T10.
+
+**Severity**: High - Context is not being intelligently filled
 
 ---
 
-## Status: 🟡 Major redesign - behavior changed intentionally
+### Issue 3: Creative Writing Task Misclassified (T15)
+**Test**: `prompt-autopilot optimize "写一段科幻小说开头设定在22世纪火星城市" --style markdown`
 
-The tool's purpose shifted from "give me code/templates" to "optimize my prompts for LLMs". This is architecturally different.
+**Problem**: A creative fiction task produces a blog post template with:
+- 受众 (audience) template
+- 核心信息 (core message) template  
+- 风格要求 (style requirements) template
+- "篇幅：适中，一般 800-1500 字"
 
-**Recommendation:** This is a significant behavior change - users who expected direct output may be confused. Consider:
-1. Adding `--output direct` flag to restore old behavior
-2. Updating README to reflect new LLM-deep architecture
-3. Renaming from "prompt-autopilot" to "prompt-optimizer" if the direct output use case is abandoned
+This should produce a story opening, not a content brief.
+
+**Severity**: High - Task type classification is wrong
+
+---
+
+### Issue 4: Academic Literature Review Misclassified (T16)
+**Test**: `prompt-autopilot optimize "写文献综述摘要关于深度学习在医学影像的应用" --style markdown`
+
+**Problem**: Same as T15 - produces blog post template instead of academic abstract structure. A literature review abstract has a completely different structure (background, methods, findings, conclusion).
+
+**Severity**: High - Domain-specific writing types not recognized
+
+---
+
+### Issue 5: Emoji Causes Wrong Template (T22)
+**Test**: `prompt-autopilot optimize "帮我写一个🎮游戏脚本" --style markdown`
+
+**Problem**: The 🎮 emoji causes the system to treat this as a blog post instead of a code/script task. The output contains:
+- "篇幅：适中，一般 800-1500 字" (word count typical of blog posts)
+- Blog-style structure instead of code template
+
+**Severity**: Medium - Emoji parsing breaks classification
+
+---
+
+### Issue 6: Circular Prompt in Explanation Template (T24)
+**Test**: `prompt-autopilot optimize "给初级工程师解释什么是闭包" --style markdown`
+
+**Problem**: The prompt itself becomes the concept to explain:
+- "📌 🔬 解释深度 - 核心概念：给初级工程师解释什么是闭包 的定义、原理、应用场景"
+- "📌 ✅ 检验理解 - 读者读完后能回答：给初级工程师解释什么是闭包 是什么？"
+
+The audience context "给初级工程师" is being absorbed into the concept name instead of being used to adjust the explanation level.
+
+**Severity**: Medium - Prompt context not parsed correctly for explanations
+
+---
+
+## Passed Tests
+- T1 (斐波那契), T2 (fix bug), T3 (道歉邮件), T4 (blog about AI)
+- T5 (量子纠缠), T6 (排序算法), T8 (function处理user data)
+- T9 (very vague "写代码" - expected generic output)
+- T12 (快速排序), T13 (LRU缓存), T14 (拒绝邮件)
+- T17 (机器学习解释 - acceptable), T18 (写单元测试 - acceptable low score)
+- T19 (优化SQL - has template issue "用 Python + SQL 实现" but minor)
+- T20 (做好功能 - very vague, expected low score)
+- T21 (AI - very vague, expected low score)
+- T23 (平方列表 - OK)
+- T25 (闭包解释 - has issue but template OK)
+- T26 (延期通知 - OK)
+- T27 (客户投诉 - OK)
+- T28 (React review - acceptable)
+
+---
+
+## Recommended Fixes (Priority Order)
+1. **Issue 2**: Fix prompt filling - T10/T11 should differ based on specific details
+2. **Issue 1**: Fix English prompt truncation
+3. **Issue 3**: Add creative writing as task type
+4. **Issue 4**: Add academic writing as task type  
+5. **Issue 5**: Fix emoji handling in prompt classification
+6. **Issue 6**: Parse audience context separately from concept name
