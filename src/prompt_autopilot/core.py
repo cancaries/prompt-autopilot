@@ -152,6 +152,8 @@ class VersionResult(TypedDict):
     description: str
     template: str
     is_direct: bool  # True = directly usable output
+    applicable_techniques: str  # e.g. Chain-of-Thought, Few-shot, Role
+    examples: str  # Few-shot examples if applicable
 
 class EvaluationResult(TypedDict):
     scores: dict[str, int]
@@ -1045,6 +1047,63 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 
 
 # =============================================================================
+# Technique Recommendations
+# =============================================================================
+
+def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[str, str]:
+    """
+    Return (applicable_techniques, examples) for a given instruction type.
+    """
+    recommendations = []
+    examples = []
+
+    if instr_type == "code":
+        recommendations.append("- Chain-of-Thought：先分析最优子结构再写")
+        recommendations.append("- Few-shot：给1-2个输入输出示例")
+        recommendations.append("- Role：扮演资深工程师")
+        # Few-shot example for code
+        if any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort')):
+            examples.append("输入：[3, 1, 2] → 输出：[1, 2, 3]")
+            examples.append("输入：[5, 2, 9, 1] → 输出：[1, 2, 5, 9]")
+        elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
+            examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
+            examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
+        else:
+            examples.append("# 正常用例 → 期望输出")
+            examples.append("# 边界用例 → 期望输出")
+
+    elif instr_type == "explanation":
+        recommendations.append("- Role：扮演耐心的老师")
+        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
+        recommendations.append("- Few-shot：给1个理解过程的示例")
+        # Few-shot example for explanation
+        examples.append("类比：把[复杂概念]比作[生活常见事物]，帮助理解")
+        examples.append("类比：[抽象概念]就像[具体例子]，因此[结论]")
+
+    elif instr_type == "writing":
+        recommendations.append("- Few-shot：给1篇范文参考")
+        recommendations.append("- Chain-of-Thought：先列提纲再写")
+        recommendations.append("- Role：扮演专业文案撰写者")
+        # Few-shot example for writing
+        examples.append("风格参考：[开头-正文-结尾结构示例]")
+        examples.append("语气示例：正式/亲切/简洁，根据受众调整")
+
+    elif instr_type in ("rejection_email", "notification_email", "complaint_email",
+                         "apology_email", "report_email"):
+        recommendations.append("- Few-shot：给1封同类邮件参考")
+        recommendations.append("- Role：扮演专业商务沟通顾问")
+        recommendations.append("- Chain-of-Thought：明确目的→组织结构→措辞选择")
+        examples.append("参考结构：称呼→开门见山→核心内容→积极收尾")
+
+    else:
+        recommendations.append("- Zero-shot：直接给出清晰指令")
+        recommendations.append("- Chain-of-Thought：分步骤描述任务")
+        recommendations.append("- Role：明确期望的执行者身份")
+
+    return "\n".join(recommendations), "\n".join(examples)
+
+
+# =============================================================================
 # Main Generator
 # =============================================================================
 
@@ -1070,6 +1129,9 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 
     versions = []
 
+    # Pre-compute technique recommendations for all versions
+    applicable_techniques, examples = get_technique_recommendations(instr_type, stripped)
+
     # Version A: Structured template (baseline)
     template_a = generate_fallback_prompt(stripped, instr_type)
     versions.append({
@@ -1077,6 +1139,8 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
         "description": "结构化 prompt 模板，引导补充关键信息",
         "template": template_a,
         "is_direct": False,
+        "applicable_techniques": applicable_techniques,
+        "examples": examples,
     })
 
     if count == 1:
@@ -1214,6 +1278,8 @@ Explain: {stripped}
         "description": "更详细的 prompt 模板，明确关键要素",
         "template": template_b,
         "is_direct": False,
+        "applicable_techniques": applicable_techniques,
+        "examples": examples,
     })
 
     if count <= 2:
@@ -1360,6 +1426,8 @@ Explain: {stripped}
         "description": "最完整的 prompt 模板，覆盖所有关键维度",
         "template": template_c,
         "is_direct": False,
+        "applicable_techniques": applicable_techniques,
+        "examples": examples,
     })
 
     return versions[:count]

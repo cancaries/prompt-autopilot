@@ -64,6 +64,8 @@ def _format_version_block(version: dict, evaluation: dict) -> list[str]:
     scores = evaluation.get('scores', {})
     overall = evaluation.get('overall', 0)
     grade = evaluation.get('grade', '')
+    applicable_techniques = version.get('applicable_techniques', '')
+    examples = version.get('examples', '')
 
     lines.append(f"\n{'=' * 52}")
     lines.append(f"📋 {vtype}  {vdesc}")
@@ -90,6 +92,19 @@ def _format_version_block(version: dict, evaluation: dict) -> list[str]:
             lines.append(f"{emoji} **{section_name}**")
         elif line.strip():
             lines.append(line)
+
+    # Add technique recommendations and examples
+    if applicable_techniques:
+        lines.append("\n\n💡 适用技术")
+        for tech in applicable_techniques.split('\n'):
+            if tech.strip():
+                lines.append(tech)
+
+    if examples:
+        lines.append("\n📖 示例（Few-shot）")
+        for ex in examples.split('\n'):
+            if ex.strip():
+                lines.append(ex)
 
     return lines
 
@@ -154,6 +169,20 @@ def format_markdown(result: OptimizationResult, show_all: bool = True) -> str:
             elif line.strip():
                 lines.append(line)
 
+        # Add technique recommendations and examples for recommended version
+        applicable_techniques = rv.get('applicable_techniques', '')
+        examples = rv.get('examples', '')
+        if applicable_techniques:
+            lines.append("\n\n💡 适用技术")
+            for tech in applicable_techniques.split('\n'):
+                if tech.strip():
+                    lines.append(tech)
+        if examples:
+            lines.append("\n📖 示例（Few-shot）")
+            for ex in examples.split('\n'):
+                if ex.strip():
+                    lines.append(ex)
+
         lines.append("")
         lines.append(sep)
 
@@ -206,6 +235,23 @@ def _console_version_block(console, version: dict, evaluation: dict, recommended
     for ln in current:
         if ln.strip():
             console.print(f"  {ln}")
+
+    # Add technique recommendations and examples
+    applicable_techniques = version.get('applicable_techniques', '')
+    examples = version.get('examples', '')
+    if applicable_techniques:
+        console.print()
+        console.print(f"[bold]💡 适用技术[/bold]")
+        for tech in applicable_techniques.split('\n'):
+            if tech.strip():
+                console.print(f"  {tech}")
+    if examples:
+        console.print()
+        console.print(f"[bold]📖 示例（Few-shot）[/bold]")
+        for ex in examples.split('\n'):
+            if ex.strip():
+                console.print(f"  {ex}")
+
     console.print()
 
 
@@ -271,6 +317,22 @@ def format_rich(result: OptimizationResult, show_all: bool = True) -> str:
         for ln in current:
             if ln.strip():
                 console.print(f"  {ln}")
+
+        # Add technique recommendations and examples for recommended version
+        applicable_techniques = rv.get('applicable_techniques', '')
+        examples = rv.get('examples', '')
+        if applicable_techniques:
+            console.print()
+            console.print(f"[bold]💡 适用技术[/bold]")
+            for tech in applicable_techniques.split('\n'):
+                if tech.strip():
+                    console.print(f"  {tech}")
+        if examples:
+            console.print()
+            console.print(f"[bold]📖 示例（Few-shot）[/bold]")
+            for ex in examples.split('\n'):
+                if ex.strip():
+                    console.print(f"  {ex}")
 
         console.print()
         console.print(f"[bold cyan]{sep}[/]")
