@@ -123,7 +123,8 @@ def detect_instruction_type(instruction: str) -> str:
         "写代码", "函数", "调试", "算法", "排序", "缓存", "队列", "栈",
         "实现", "编程", "代码", "class", "method", "module",
         "lr", "cache", "queue", "stack", "hash", "tree", "graph",
-        "登录", "注册", "用户", "验证", "auth", "login", "register"
+        "登录", "注册", "用户", "验证", "auth", "login", "register",
+        "斐波那契", "fibonacci", "quicksort", "mergesort"
     ]
     if any(word in instruction_lower for word in code_keywords):
         return "code"
@@ -300,7 +301,8 @@ def get_resource():
     # Generic
     if lang == "zh":
         topic = instruction.replace("帮我", "").replace("写", "").replace("一个", "").strip()
-        func_name = ''.join(c for c in topic if c.isalnum() or c == '_')
+        # Use generic function name for Chinese topics (cannot derive valid Python identifier)
+        func_name = 'solution'
         return f"""```python
 # {topic}
 def {func_name}():
@@ -309,7 +311,7 @@ def {func_name}():
 提示: 较简单，请补充细节"""
     return f"""```python
 # {instruction}
-def process():
+def solution():
     pass
 ```"""
     
@@ -420,20 +422,18 @@ def quicksort(arr):
     # Generic code request
     if lang == "zh":
         topic = instruction.replace("帮我", "").replace("写", "").replace("一个", "").strip()
-        func_name = ''.join(c for c in topic if c.isalnum() or c == '_')
+        # Use generic function name for Chinese topics (cannot derive valid Python identifier)
+        func_name = 'solution'
         return f"""```python
 # {topic}
 def {func_name}():
-    """
-    处理: {topic}
-    """
     pass
 ```
 
 **提示**: 指令较简单，如需特定实现请补充更多细节"""
     return f"""```python
 # {instruction}
-def process():
+def solution():
     pass
 ```"""
 
@@ -516,7 +516,29 @@ def generate_direct_writing(instruction: str, lang: str) -> str:
     """Generate usable writing templates/content."""
     instruction_lower = instruction.lower()
     
-    # Email templates
+    # Email templates - check rejection BEFORE generic email/apology
+    if any(w in instruction_lower for w in ["拒绝", "谢绝", "declin"]):
+        if lang == "zh":
+            return '''## 拒绝邮件模板
+
+**Subject**: 关于[面试/职位/邀请]的回复
+
+亲爱的[收件人]：
+
+您好。
+
+非常感谢您发来的[面试邀请/职位机会/邀请]。
+
+经过慎重考虑，我决定[接受/拒绝]本次[面试/邀请]。
+
+[如拒绝，说明原因，如：因个人时间安排冲突/已接受其他机会等]
+
+再次感谢您的理解与支持，祝贵司[业务蒸蒸日上/招聘顺利]。
+
+此致
+[你的名字]
+[日期]'''
+    
     if any(w in instruction_lower for w in ["邮件", "email", "道歉"]):
         if lang == "zh":
             return '''## 道歉邮件模板
@@ -571,7 +593,7 @@ def generate_direct_writing(instruction: str, lang: str) -> str:
 
     # Generic writing
     if lang == "zh":
-        return f'''## 关于"[instruction]"的内容框架
+        return f'''## 关于"{instruction}"的内容框架
 
 ### 引言
 [开场白，引出主题]
@@ -625,7 +647,7 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
         elif instr_type == "writing":
             direct_output = generate_direct_writing(instruction, lang)
         else:
-            direct_output = f"**直接回答**：{stripped}\n\n[基于指令生成的具体内容]"
+            direct_output = f"**直接回答**：{stripped}\n\n[请补充具体内容或细节]"
         
         versions.append({
             "type": "A (Direct)",
@@ -799,26 +821,26 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
     if version["is_direct"] and complexity == "simple":
         # Direct output for simple task = perfect
         return {
-            "scores": {"fit": 10, "completeness": 8},
+            "scores": {"clarity": 10, "specificity": 8, "completeness": 8},
             "overall": 9.0,
             "grade": "A"
         }
     elif not version["is_direct"] and complexity == "simple":
         # Template for simple task = overkill
         return {
-            "scores": {"fit": 4, "completeness": 6},
+            "scores": {"clarity": 4, "specificity": 5, "completeness": 6},
             "overall": 5.0,
             "grade": "C"
         }
     elif version["is_direct"]:
         return {
-            "scores": {"fit": 7, "completeness": 7},
+            "scores": {"clarity": 7, "specificity": 7, "completeness": 7},
             "overall": 7.0,
             "grade": "B"
         }
     else:
         return {
-            "scores": {"fit": 6, "completeness": 7},
+            "scores": {"clarity": 6, "specificity": 6, "completeness": 7},
             "overall": 6.5,
             "grade": "B"
         }

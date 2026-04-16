@@ -79,7 +79,7 @@ def format_markdown(result: OptimizationResult, show_all: bool = True) -> str:
         for i, (v, e) in enumerate(zip(result["versions"], result["evaluations"])):
             marker = "✅ " if i == result["recommended_idx"] else "   "
             lines.append(f"{marker}**Version {v['type']}** ({v['description']})")
-            lines.append(f"   Score: {e['overall']}/10 ({e['grade']}) | ", ending="")
+            lines.append(f"   Score: {e['overall']}/10 ({e['grade']}) | ")
             lines.append(f"C={e['scores']['clarity']} S={e['scores']['specificity']} O={e['scores']['completeness']}\n")
         lines.append("")
     
