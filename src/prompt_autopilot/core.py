@@ -1165,16 +1165,16 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
         recommendations.append("- Few-shot：给1个理解过程的示例")
         # Few-shot example for explanation
-        examples.append("类比：把[复杂概念]比作[生活常见事物]，帮助理解")
-        examples.append("类比：[抽象概念]就像[具体例子]，因此[结论]")
+        examples.append('类比：把"区块链去中心化"比作"村民共同记账"，没有任何单一村民能篡改账本')
+        examples.append("类比：数据库索引就像书的目录，找到目标内容无需逐页翻找")
 
     elif instr_type == "writing":
         recommendations.append("- Few-shot：给1篇范文参考")
         recommendations.append("- Chain-of-Thought：先列提纲再写")
         recommendations.append("- Role：扮演专业文案撰写者")
         # Few-shot example for writing
-        examples.append("风格参考：[开头-正文-结尾结构示例]")
-        examples.append("语气示例：正式/亲切/简洁，根据受众调整")
+        examples.append('风格参考：开头用"你是否也遇到过..."引发共鸣；正文分3点展开；结尾用"现在就试试..."号召行动')
+        examples.append('语气示例：面向程序员用"无需多余配置"；面向管理者用"节省50%时间"更具说服力')
 
     elif instr_type in ("rejection_email", "notification_email", "complaint_email",
                          "apology_email", "report_email"):
