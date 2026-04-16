@@ -53,7 +53,10 @@ def main():
     opt_parser.add_argument("instruction", nargs="*", help="Instruction to optimize")
     opt_parser.add_argument("--style", choices=["markdown", "rich", "minimal"], default="rich", help="Output style")
     opt_parser.add_argument("--all", action="store_true", help="Show all versions (not just recommended)")
-    opt_parser.add_argument("--use-llm", action="store_true", help="Use LLM to generate optimized prompt (requires API key)")
+    opt_parser.add_argument("--use-llm", action="store_true", help="Use LLM to generate optimized prompt (requires API key) [deprecated, use --deep]")
+    opt_parser.add_argument("--tier", choices=["auto", "fast", "medium", "deep"], default="auto", help="LLM tier selection: auto (default), fast (gpt-3.5), medium (fast model + detailed prompt), deep (gpt-4)")
+    opt_parser.add_argument("--fast", action="store_true", help="Force fast LLM (gpt-3.5-turbo)")
+    opt_parser.add_argument("--deep", action="store_true", help="Force deep LLM (gpt-4)")
     opt_parser.add_argument("--save", metavar="NAME", help="Save the optimized result to library with given name")
 
     # analyze command
@@ -208,10 +211,26 @@ def main():
                     ask_feedback(instruction, result)
                     return
 
-        # Default: run optimization
-        result = optimize(instruction, use_llm=args.use_llm)
+        # Determine tier from flags
+        tier = "auto"
+        if args.fast:
+            tier = "fast"
+        elif args.deep:
+            tier = "deep"
+        elif args.use_llm:  # Legacy --use-llm maps to deep
+            tier = "deep"
+        elif getattr(args, 'tier', None) and args.tier != "auto":
+            tier = args.tier
+
+        # Run optimization with tier selection
+        result = optimize(instruction, tier=tier)
         style = DisplayStyle(args.style) if args.style else DisplayStyle.RICH
         output = display_result(result, style=style, show_all=args.all)
+
+        # Show tier info
+        llm_tier = result.get("llm_tier", "auto")
+        tier_info = {"none": "(无 API key，使用模板)", "fast": "(⚡ fast LLM)", "medium": "(⚡ medium LLM)", "deep": "(🧠 deep LLM)", "auto": "(auto)"}
+        print(f"\n{tier_info.get(llm_tier, '')}")
         print(output)
 
         # --save flag
@@ -549,9 +568,16 @@ def interactive():
 
             if cmd == "optimize" or cmd == "o":
                 if not rest:
-                    print("Usage: /optimize <instruction>")
+                    print("Usage: /optimize <instruction> [--fast|--deep]")
                     continue
-                result = optimize(rest)
+                tier = "auto"
+                if "--fast" in rest:
+                    tier = "fast"
+                    rest = rest.replace("--fast", "").strip()
+                elif "--deep" in rest:
+                    tier = "deep"
+                    rest = rest.replace("--deep", "").strip()
+                result = optimize(rest, tier=tier)
                 print(display_result(result, DisplayStyle.RICH))
                 ask_feedback(rest, result)
 

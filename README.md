@@ -2,7 +2,7 @@
 
 **Turn AI tool output from "templates" to "professional tools"**
 
-> No API Key required · Ready to use · Chinese & English
+> All steps are LLM-powered · No API Key required · Chinese & English
 
 [中文说明](README_zh.md) · [English](README_en.md) · [Integration Guide](INTEGRATION.md) · [License](LICENSE)
 
@@ -50,19 +50,44 @@ pma optimize "写排序算法"   # Smart optimization
 
 ---
 
+## 🧠 LLM Tier System
+
+**All steps are LLM-powered.** The difference is only in model selection:
+
+| Tier | Model | Response Time | Use Case |
+|------|-------|--------------|----------|
+| ⚡ **fast** | gpt-3.5-turbo | 1-2s | Simple instructions (< 10 words) |
+| ⚡ **medium** | gpt-3.5-turbo + detailed prompt | 2-3s | Medium instructions |
+| 🧠 **deep** | gpt-4 | 5-10s | Complex instructions (>= 30 words) |
+
+### CLI Usage
+
+```bash
+# Auto-select tier based on instruction complexity (default)
+pma optimize "做个登录"
+
+# Force fast LLM (gpt-3.5-turbo, ~1-2s)
+pma optimize "做个登录" --fast
+
+# Force deep LLM (gpt-4, ~5-10s)
+pma optimize "做个登录" --deep
+
+# Explicit tier selection
+pma optimize "做个登录" --tier auto|fast|medium|deep
+```
+
+---
+
 ## 🔐 API Key Configuration (Optional)
 
-For enhanced LLM-powered optimization, configure your API key securely:
+For LLM-powered optimization, configure your API key securely:
 
 ```bash
 # Method 1: Environment variables (recommended)
 export PROMPT_AUTOPILOT_API_KEY="sk-..."
-export PROMPT_AUTOPILOT_MODEL="gpt-4"
+export PROMPT_AUTOPILOT_FAST_MODEL="gpt-3.5-turbo"
+export PROMPT_AUTOPILOT_DEEP_MODEL="gpt-4"
 export PROMPT_AUTOPILOT_ENDPOINT="https://api.openai.com/v1/chat/completions"
-
-# Then use --use-llm flag
-prompt-autopilot optimize "做个登录功能" --use-llm
-prompt-autopilot think "帮我写排序算法" --use-llm
 ```
 
 ```bash
@@ -70,15 +95,14 @@ prompt-autopilot think "帮我写排序算法" --use-llm
 # File: ~/.prompt-autopilot/config.json
 {
   "llm_api_key": "sk-...",
-  "llm_model": "gpt-4",
+  "fast_model": "gpt-3.5-turbo",
+  "deep_model": "gpt-4",
   "llm_endpoint": "https://api.openai.com/v1/chat/completions"
 }
-
-# Then use --use-llm flag
-prompt-autopilot optimize "做个登录功能" --use-llm
 ```
 
-**Priority**: Environment variables > Config file > Defaults
+**Without API key**: Falls back to built-in smart templates.
+**With API key**: All steps use LLM with auto tier selection.
 
 > ⚠️ **Security**: API keys are never committed to git. The `config.json` file and `.env` are in `.gitignore`.
 
@@ -87,7 +111,7 @@ prompt-autopilot optimize "做个登录功能" --use-llm
 ## ⭐ Features
 
 - 🧠 **think** — Dual perspective analysis (engineer + product)
-- ✨ **optimize** — Intelligent inference with professional output
+- ⚡ **optimize** — LLM-powered with tier selection (fast/medium/deep)
 - 📊 **analyze** — Quick gap detection
 - 🎯 **No API Key needed** — Built-in smart inference engine
 - 🔧 **Category-aware** — Code, writing, explanation, Q&A

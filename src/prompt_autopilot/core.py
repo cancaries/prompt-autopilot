@@ -1,8 +1,15 @@
 """
 Core optimization logic for prompt-autopilot v2.
 
-Philosophy: Direct answers, not templates. The tool should complete tasks,
-not create more work for the user.
+Philosophy: All steps are LLM-powered. Different tiers for different complexity.
+
+⚡ Fast LLM (simple instructions)
+   - Model: MiniMax / GPT-3.5-turbo
+   - Concise prompt, 1-2s response
+
+🧠 Deep LLM (complex instructions)
+   - Model: GPT-4 / Claude
+   - Detailed prompt, 5-10s response
 """
 
 import json
@@ -32,33 +39,200 @@ DEFAULT_PREFERENCES = {
 }
 
 # =============================================================================
-# Category-Specific Generation Prompt Templates
+# LLM Tier System - All steps are LLM-powered
 # =============================================================================
 
+LLM_TIERS = {
+    "fast": {
+        "model": "gpt-3.5-turbo",
+        "timeout": 5,
+        "prompt_style": "concise",
+    },
+    "deep": {
+        "model": "gpt-4",
+        "timeout": 30,
+        "prompt_style": "detailed",
+    }
+}
+
+
+def _count_chinese_chars(text: str) -> int:
+    """Count Chinese characters in text."""
+    return sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+
+
+def get_llm_tier(instruction: str) -> str:
+    """
+    Auto-select LLM tier based on instruction complexity.
+    
+    For English: uses word count (split by whitespace)
+    For Chinese: uses character count (Chinese has no spaces)
+    
+    Rules:
+    - < 10 words / < 20 Chinese chars → fast
+    - < 30 words / < 60 Chinese chars → medium
+    - >= 30 words / >= 60 Chinese chars → deep
+    """
+    chinese_chars = _count_chinese_chars(instruction)
+    total_chars = len(instruction)
+    
+    # Primarily Chinese text - use character count
+    if chinese_chars > total_chars * 0.5:
+        if chinese_chars < 20:
+            return "fast"
+        elif chinese_chars < 60:
+            return "medium"
+        else:
+            return "deep"
+    
+    # English or mixed - use word count
+    words = len(instruction.split())
+    if words < 10:
+        return "fast"
+    elif words < 30:
+        return "medium"
+    else:
+        return "deep"
+
+
+def get_llm_config() -> dict:
+    """Get LLM config with priority: env vars > config file > defaults.
+    
+    Environment variables:
+    - PROMPT_AUTOPILOT_API_KEY: LLM API key
+    - PROMPT_AUTOPILOT_MODEL: Default model name (default: gpt-4)
+    - PROMPT_AUTOPILOT_ENDPOINT: API endpoint URL
+    - PROMPT_AUTOPILOT_FAST_MODEL: Fast tier model (default: gpt-3.5-turbo)
+    - PROMPT_AUTOPILOT_DEEP_MODEL: Deep tier model (default: gpt-4)
+    """
+    cfg = {}
+    # Load from config file as base
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r") as f:
+            cfg = json.load(f)
+    # Environment variables override (highest priority)
+    if os.environ.get("PROMPT_AUTOPILOT_API_KEY"):
+        cfg["llm_api_key"] = os.environ["PROMPT_AUTOPILOT_API_KEY"]
+    if os.environ.get("PROMPT_AUTOPILOT_MODEL"):
+        cfg["llm_model"] = os.environ["PROMPT_AUTOPILOT_MODEL"]
+    if os.environ.get("PROMPT_AUTOPILOT_ENDPOINT"):
+        cfg["llm_endpoint"] = os.environ["PROMPT_AUTOPILOT_ENDPOINT"]
+    if os.environ.get("PROMPT_AUTOPILOT_FAST_MODEL"):
+        cfg["fast_model"] = os.environ["PROMPT_AUTOPILOT_FAST_MODEL"]
+    if os.environ.get("PROMPT_AUTOPILOT_DEEP_MODEL"):
+        cfg["deep_model"] = os.environ["PROMPT_AUTOPILOT_DEEP_MODEL"]
+    # Ensure defaults
+    cfg.setdefault("llm_api_key", None)
+    cfg.setdefault("llm_model", "gpt-4")
+    cfg.setdefault("llm_endpoint", "https://api.openai.com/v1/chat/completions")
+    cfg.setdefault("fast_model", "gpt-3.5-turbo")
+    cfg.setdefault("deep_model", "gpt-4")
+    cfg.setdefault("default_tier", "auto")
+    return cfg
+
+
+def call_llm(prompt: str, tier: str = "deep", system: str = None) -> Optional[str]:
+    """
+    Unified LLM call with tier-specific model selection.
+    
+    Args:
+        prompt: User prompt content
+        tier: "fast" or "deep" (model selection based on this)
+        system: Optional system prompt override
+    """
+    cfg = get_llm_config()
+    api_key = cfg.get("llm_api_key")
+    if not api_key:
+        return None
+
+    # Select model based on tier
+    if tier == "fast":
+        model = cfg.get("fast_model", "gpt-3.5-turbo")
+        timeout = LLM_TIERS["fast"]["timeout"]
+    else:
+        model = cfg.get("deep_model", "gpt-4")
+        timeout = LLM_TIERS["deep"]["timeout"]
+
+    endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
+    default_system = "你是一个专业的 prompt 工程专家，擅长将模糊的用户需求转化为完整、精确的 prompt。你的工作哲学：不要问用户问题，直接推理并填充合理的默认值；宁可多做，不要少做；深度推理比规则匹配好 100 倍。"
+    
+    try:
+        response = requests.post(
+            endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system or default_system},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.7,
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None
+
+
 # =============================================================================
-# LLM-Enhanced Prompt Generation Prompts
+# LLM-Enhanced Analysis & Generation Prompts (by tier)
 # =============================================================================
 
-PROMPT_GENERATION_SYSTEM = '''你是一个专业的 prompt 工程专家，擅长将模糊的用户需求转化为完整、精确的 prompt。
+# Fast tier prompts (concise, for simple instructions)
+FAST_ANALYSIS_PROMPT = '''分析以下用户指令，简短输出 JSON：
+{{"type": "任务类型", "missing": ["缺失要素"], "assumptions": ["假设"], "complexity": "simple/medium/complex"}}
 
-你的工作哲学：
-- 不要问用户问题，直接推理并填充合理的默认值
-- 宁可多做，不要少做
-- 用户说"做个登录功能"，你要想到：注册、密码找回、第三方登录、JWT、数据库、安全...
-- 深度推理比规则匹配好 100 倍'''
+指令：{instruction}
 
-CODE_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
+直接输出 JSON，不要解释。'''
+
+FAST_GENERATION_PROMPT = '''用户想要：{instruction}
+
+生成优化后的完整 prompt，包含：
+- 任务描述
+- 约束条件
+- 质量标准
+
+直接输出 prompt 文本，不要解释。'''
+
+# Deep tier prompts (detailed, for complex instructions)
+DEEP_ANALYSIS_PROMPT = '''你是 prompt 工程专家。深度分析以下用户指令：
 
 {instruction}
 
-请深度思考并生成：
+请输出 JSON：
+{{
+  "type": "任务类型（code/writing/explanation/general等）",
+  "missing": ["用户没说明但需要补充的要素"],
+  "assumptions": ["你做的合理假设"],
+  "risks": ["潜在风险或问题"],
+  "complexity": "simple/medium/complex",
+  "language": "zh/en/mixed",
+  "word_count": 词数
+}}
 
-1. 【意图理解】用户真正想要的是什么？不是字面，而是背后目的。"做个登录功能" 背后可能是：一个需要用户认证的系统，可能是 Web/APP/后端服务的一部分。
+要求：
+- 深度推理，挖掘用户真正想要的是什么
+- 假设要有道理，不要过度假设
+- complexity: simple=5句话内完成, medium=需要一些结构, complex=需要完整模板
+
+直接输出 JSON。'''
+
+DEEP_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
+
+{instruction}
+
+请深度思考并生成优化后的 prompt：
+
+1. 【意图理解】用户真正想要的是什么？不是字面，而是背后目的。
 
 2. 【盲点发现】用户没想到但很重要的东西有哪些？
-   例如：
-   - "做个登录" → 可能需要：注册功能、密码找回、第三方登录（微信/Google）、会话管理、JWT/ Session、数据库设计、密码加密（bcrypt）、防暴力破解...
-   - "写个排序" → 可能需要：数据规模、是否需要稳定排序、是否需要自定义比较、空间限制...
 
 3. 【优化后的 prompt】生成一个完整的、专业的 prompt，包含：
    - 清晰的任务描述（用一句话描述你要 AI 做什么）
@@ -69,70 +243,12 @@ CODE_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
 
 4. 【before/after】给出优化前后的对比
 
-直接输出优化后的 prompt 和对比，不要解释你的思考过程。
-用自然段落组织，不要分点列举。'''
+直接输出优化后的 prompt 和对比，用自然段落组织，不要分点列举。'''
 
-WRITING_GENERATION_PROMPT = '''你是写作专家，擅长生成能产生好内容的写作指令。
+# Medium tier - uses fast model but with deep analysis prompt
+MEDIUM_ANALYSIS_PROMPT = DEEP_ANALYSIS_PROMPT
+MEDIUM_GENERATION_PROMPT = DEEP_GENERATION_PROMPT  # Use deep prompts even for medium
 
-用户想要：{instruction}
-
-请生成"优化后的写作 prompt"，包含：
-1. 受众是谁（年龄/职业/阅读习惯）
-2. 写作目的（说服/通知/娱乐/教育）
-3. 语气风格（正式/轻松/专业/亲切）
-4. 文章结构（开头/主体/结尾的要求）
-5. 字数要求（如有）
-6. 禁止事项（不要写什么）
-
-生成"优化后的 prompt"，不要直接写文章内容。'''
-
-EXPLANATION_GENERATION_PROMPT = '''你是一位老师，擅长把复杂概念讲得通俗易懂。
-
-用户想要理解：{instruction}
-
-请生成一个"优化后的 prompt"，让 AI 能够给出好的解释。
-
-优化后的 prompt 应该包含：
-1. 受众是谁（年龄/背景/知识水平）
-2. 解释深度（科普/专业/深入）
-3. 需要讲清楚的核心概念（1-3个）
-4. 生活类比/场景（必须有一个身边的例子）
-5. 避免的误区（常见误解）
-
-生成"优化后的 prompt"，而不是直接解释。'''
-
-GENERAL_GENERATION_PROMPT = '''你是一个 prompt 工程专家。用户想要：
-
-{instruction}
-
-请深度思考并生成：
-
-1. 【意图理解】用户真正想完成的是什么？不是字面，而是背后目的。
-
-2. 【盲点发现】用户没想到但很重要的东西有哪些？
-
-3. 【优化后的 prompt】生成一个完整的、专业的 prompt，包含：
-   - 清晰的任务描述
-   - 具体的约束条件
-   - 相关的背景信息
-   - 质量标准
-
-4. 【before/after】对比
-
-直接输出，不要解释你的思考过程。'''
-
-SELF_REFLECTION_PROMPT = '''你是 prompt-autopilot 的创造者。审视当前系统：
-
-当前系统输出：
-{recent_output}
-
-请深度反思：
-1. 这个输出专业吗？哪里不够好？
-2. 对标 linshenkx/prompt-optimizer，我们差在哪里？
-3. 如果你是用户，你会满意吗？为什么？
-4. 最需要改进的一个点是什么？
-
-诚实、严格地自我批判。直接输出反思结果。'''
 
 # =============================================================================
 # Types
@@ -151,9 +267,9 @@ class VersionResult(TypedDict):
     type: str
     description: str
     template: str
-    is_direct: bool  # True = directly usable output
-    applicable_techniques: str  # e.g. Chain-of-Thought, Few-shot, Role
-    examples: str  # Few-shot examples if applicable
+    is_direct: bool
+    applicable_techniques: str
+    examples: str
 
 class EvaluationResult(TypedDict):
     scores: dict[str, int]
@@ -168,37 +284,11 @@ class OptimizationResult(TypedDict):
     recommended_idx: int
     recommended_version: VersionResult
     recommended_evaluation: EvaluationResult
+    llm_tier: str  # which tier was used
 
 # =============================================================================
 # Preferences
 # =============================================================================
-
-def get_llm_config() -> dict:
-    """Get LLM config with priority: env vars > config file > defaults.
-    
-    Environment variables:
-    - PROMPT_AUTOPILOT_API_KEY: LLM API key
-    - PROMPT_AUTOPILOT_MODEL: Model name (default: gpt-4)
-    - PROMPT_AUTOPILOT_ENDPOINT: API endpoint URL
-    """
-    cfg = {}
-    # Load from config file as base (only keys not in env)
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
-            cfg = json.load(f)
-    # Environment variables override (highest priority)
-    if os.environ.get("PROMPT_AUTOPILOT_API_KEY"):
-        cfg["llm_api_key"] = os.environ["PROMPT_AUTOPILOT_API_KEY"]
-    if os.environ.get("PROMPT_AUTOPILOT_MODEL"):
-        cfg["llm_model"] = os.environ["PROMPT_AUTOPILOT_MODEL"]
-    if os.environ.get("PROMPT_AUTOPILOT_ENDPOINT"):
-        cfg["llm_endpoint"] = os.environ["PROMPT_AUTOPILOT_ENDPOINT"]
-    # Ensure defaults
-    cfg.setdefault("llm_api_key", None)
-    cfg.setdefault("llm_model", "gpt-4")
-    cfg.setdefault("llm_endpoint", "https://api.openai.com/v1/chat/completions")
-    return cfg
-
 
 def load_config() -> dict:
     """Load LLM configuration (legacy, wraps get_llm_config)."""
@@ -220,7 +310,7 @@ def save_preferences(prefs: dict):
         json.dump(prefs, f, indent=2)
 
 # =============================================================================
-# Analysis
+# Analysis - All LLM-powered with tier selection
 # =============================================================================
 
 def detect_language(text: str) -> str:
@@ -232,50 +322,20 @@ def detect_language(text: str) -> str:
         return "en"
     return "mixed"
 
-def detect_task_complexity(instruction: str, instruction_type: str) -> str:
-    """
-    Determine if task is simple enough to complete directly.
-    Simple = can be done in a few lines/sentences
-    Medium = needs some structure but can still provide framework
-    Complex = truly needs a template to fill out
-    """
-    words = instruction.split()
-    
-    # Short + action words = likely simple
-    if len(words) <= 5 and instruction_type in ["code", "writing", "explanation"]:
-        return "simple"
-    
-    # Explicit multi-step requests = complex
-    if any(phrase in instruction for phrase in ["具体", "详细", "一步步", "step by step", "详细说明"]):
-        return "complex"
-    
-    # Very short vague requests = simple (just do it directly)
-    if len(words) <= 8:
-        return "simple"
-    
-    # Medium length with multiple requirements = medium
-    return "medium"
 
 def _strip_emoji(text: str) -> str:
-    """Remove emoji characters before classification to prevent interference.
-    
-    Bug 5 fix: removed overly broad \U000024C2-\U0001F251 range which was
-    incorrectly matching CJK characters (all Chinese chars fell in this range).
-    Only includes genuine emoji Unicode blocks.
-    """
+    """Remove emoji characters before classification."""
     import re
-    # Only target emoji Unicode blocks - NOT broad ranges that include CJK
-    # See https://unicode.org/Public/emoji/latest/emoji-data.txt
     emoji_pattern = re.compile(
-        "[\U0001F600-\U0001F64F"      # Emoticons
-        "\U0001F300-\U0001F5FF"        # Misc Symbols and Pictographs
-        "\U0001F680-\U0001F6FF"        # Transport and Map Symbols
-        "\U0001F1E0-\U0001F1FF"        # Flags
-        "\U00002702-\U000027B0"        # Dingbats
-        "\U0001F900-\U0001F9FF"        # Supplemental Symbols and Pictographs
-        "\U0001FA00-\U0001FA6F"        # Chess, etc.
-        "\U0001FA70-\U0001FAFF"        # Symbols and Pictographs Extended-A
-        "\U00002600-\U000026FF"        # Misc Technical (includes some symbols, not CJK)
+        "[\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002702-\U000027B0"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF"
         "]+",
         flags=re.UNICODE
     )
@@ -283,75 +343,34 @@ def _strip_emoji(text: str) -> str:
 
 
 def _extract_core_concept(instruction: str) -> str:
-    """
-    Extract the core concept from an explanation-style instruction.
-    Strips common explanatory prefixes/suffixes to isolate the real topic.
-    
-    "给初级工程师解释什么是闭包" → "闭包"
-    "用通俗语言介绍Python装饰器" → "Python装饰器"
-    "告诉我有关机器学习的一切" → "机器学习"
-    "深入讲解Go语言协程" → "Go语言协程"
-    "介绍一下大模型幻觉问题" → "大模型幻觉问题"
-    "普及一下区块链技术" → "区块链技术"
-    "解释一下什么是HTTP/2" → "HTTP/2"
-    "介绍一下量子计算原理" → "量子计算原理"
-    """
+    """Extract the core concept from an explanation-style instruction."""
     text = instruction.strip()
-    
-    # Patterns to strip from the beginning (explanatory phrases)
     strip_prefixes = [
-        "给初级工程师解释什么是",
-        "给工程师解释什么是",
-        "给程序员解释什么是",
-        "给小白解释什么是",
-        "解释什么是",
-        "解释一下什么是",
-        "解释一下",
-        "介绍一下",
-        "通俗地介绍",
-        "用通俗语言介绍",
-        "深入讲解",
-        "讲解一下",
-        "普及一下",
-        "告诉你有关",
-        "讲讲",
-        "介绍一下",
-        "告诉我有关",
-        "说说什么是",
-        "说一说",
+        "给初级工程师解释什么是", "给工程师解释什么是", "给程序员解释什么是",
+        "给小白解释什么是", "解释什么是", "解释一下什么是", "解释一下",
+        "介绍一下", "通俗地介绍", "用通俗语言介绍", "深入讲解", "讲解一下",
+        "普及一下", "告诉你有关", "讲讲", "告诉我有关", "说说什么是", "说一说",
     ]
-    
     for prefix in strip_prefixes:
         if text.startswith(prefix):
             text = text[len(prefix):]
             break
-    
-    # Patterns to strip from the end
     strip_suffixes = [
-        "的定义",
-        "的定义、原理",
-        "的定义、原理、应用",
-        "的原理",
-        "的原理和应用",
-        "的概念",
-        "的相关知识",
-        "的一切",
+        "的定义", "的定义、原理", "的定义、原理、应用", "的原理",
+        "的原理和应用", "的概念", "的相关知识", "的一切",
     ]
-    
     for suffix in strip_suffixes:
         if text.endswith(suffix):
             text = text[:-len(suffix)]
             break
-    
     return text.strip() if text.strip() else instruction
 
 
 def detect_instruction_type(instruction: str) -> str:
-    # Strip emoji BEFORE classification to prevent interference (Bug 5 fix)
+    """Rule-based type detection as fallback when LLM unavailable."""
     text = _strip_emoji(instruction)
     text_lower = text.lower()
     
-    # Code review / code analysis (check BEFORE generic code keywords)
     code_review_keywords = [
         "review", "review代码", "代码review", "cr", "代码审查", "代码分析",
         "性能review", "review这段", "代码审查", "review一下", "review下"
@@ -359,7 +378,6 @@ def detect_instruction_type(instruction: str) -> str:
     if any(word in text_lower for word in code_review_keywords):
         return "code_review"
     
-    # Test generation (check BEFORE writing keywords)
     test_generation_keywords = [
         "单元测试", "unit test", "测试用例", "写测试", "test case",
         "pytest", "jest", "testing", "测试代码"
@@ -367,7 +385,6 @@ def detect_instruction_type(instruction: str) -> str:
     if any(word in text_lower for word in test_generation_keywords):
         return "test_generation"
     
-    # Code (generic)
     code_keywords = [
         "code", "function", "script", "implement", "debug", "fix", "refactor",
         "api", "database", "sql", "python", "javascript", "java", "golang", "rust",
@@ -376,14 +393,11 @@ def detect_instruction_type(instruction: str) -> str:
         "lr", "cache", "queue", "stack", "hash", "tree", "graph",
         "登录", "注册", "用户", "验证", "auth", "login", "register",
         "斐波那契", "fibonacci", "quicksort", "mergesort",
-        # Bug 5 fix: add Chinese "脚本" to code_keywords so game scripts are classified as code
         "脚本", "代码脚本", "游戏脚本", "程序脚本",
     ]
     if any(word in text_lower for word in code_keywords):
         return "code"
     
-    # ---- Email sub-type detection (before generic writing) ----
-    # More specific → less specific order to avoid false positives
     if any(w in text_lower for w in ["拒绝", "谢绝", "无法录用", "面试结果", "不录用"]):
         return "rejection_email"
     if any(w in text_lower for w in ["道歉", "sorry", "apologize", "致歉"]):
@@ -395,7 +409,6 @@ def detect_instruction_type(instruction: str) -> str:
     if any(w in text_lower for w in ["投诉", "complaint", "客户投诉", "申诉"]):
         return "complaint_email"
     
-    # Creative writing - specific check BEFORE generic writing (Bug 3 fix)
     creative_writing_keywords = [
         "小说", "fiction", "story", "开头", "科幻", "奇幻", "悬疑",
         "散文", "poetry", "poem", "短篇", "长篇", "故事", "narrative",
@@ -404,7 +417,6 @@ def detect_instruction_type(instruction: str) -> str:
     if any(w in text_lower for w in creative_writing_keywords):
         return "creative_writing"
     
-    # Academic writing - specific check BEFORE generic writing (Bug 4 fix)
     academic_writing_keywords = [
         "文献综述", "摘要", "abstract", "论文", "学术", "研究", "研究论文",
         "dissertation", "thesis", "学术论文", "sci", "期刊文章",
@@ -413,7 +425,6 @@ def detect_instruction_type(instruction: str) -> str:
     if any(w in text_lower for w in academic_writing_keywords):
         return "academic_writing"
     
-    # Writing (generic)
     writing_keywords = [
         "write", "compose", "draft", "email", "letter", "article", "blog",
         "写", "文章", "邮件", "文案", "汇报", "报告", "总结"
@@ -421,221 +432,183 @@ def detect_instruction_type(instruction: str) -> str:
     if any(word in text_lower for word in writing_keywords):
         return "writing"
     
-    # Explanation
     if any(word in text_lower for word in [
         "explain", "what", "how", "why", "difference", "解释", "说明", "是什么", "什么是", "为什么", "介绍"
     ]):
         return "explanation"
     
-    # Question
     if "?" in text or "吗" in text or "？" in text:
         return "question"
     
     return "general"
 
-def analyze_instruction(instruction: str) -> AnalysisResult:
+
+def analyze_instruction(instruction: str, tier: str = None) -> AnalysisResult:
+    """
+    Analyze instruction using LLM (with tier selection).
+    Falls back to rule-based if LLM unavailable.
+    
+    Args:
+        instruction: The user instruction to analyze
+        tier: "auto" (default), "fast", "medium", "deep"
+            - auto: selects tier based on instruction complexity
+            - fast: use fast model (gpt-3.5-turbo)
+            - medium: use fast model with detailed prompt
+            - deep: use deep model (gpt-4) with detailed prompt
+    """
+    # Auto-select tier if not specified
+    if tier is None or tier == "auto":
+        tier = get_llm_tier(instruction)
+    
+    # Map medium to fast (we use fast model but enhanced prompt)
+    effective_tier = "fast" if tier == "medium" else tier
+    
+    # Select appropriate prompt based on tier
+    if effective_tier == "fast":
+        prompt_template = FAST_ANALYSIS_PROMPT
+    else:
+        prompt_template = DEEP_ANALYSIS_PROMPT
+    
+    # Try LLM-based analysis
+    llm_result = call_llm(
+        prompt_template.format(instruction=instruction),
+        tier=effective_tier
+    )
+    
+    if llm_result:
+        try:
+            # Try to parse JSON from LLM response
+            import re
+            json_match = re.search(r'\{[^{}]*\}', llm_result, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                return AnalysisResult(
+                    missing=data.get("missing", []),
+                    assumptions=data.get("assumptions", []),
+                    risks=data.get("risks", []),
+                    word_count=data.get("word_count", len(instruction.split())),
+                    instruction_type=data.get("type", detect_instruction_type(instruction)),
+                    language=data.get("language", detect_language(instruction)),
+                    task_complexity=data.get("complexity", "medium"),
+                )
+        except (json.JSONDecodeError, KeyError):
+            pass  # Fall through to rule-based
+    
+    # Fallback to rule-based analysis when LLM unavailable
+    return _rule_based_analysis(instruction)
+
+
+def _rule_based_analysis(instruction: str) -> AnalysisResult:
+    """Rule-based analysis fallback when LLM unavailable."""
     instruction_lower = instruction.lower()
     words = instruction_lower.split()
     lang = detect_language(instruction)
     instr_type = detect_instruction_type(instruction)
-    complexity = detect_task_complexity(instruction, instr_type)
+    
+    # Determine complexity based on length and type
+    if len(words) <= 5 and instr_type in ["code", "writing", "explanation"]:
+        complexity = "simple"
+    elif any(phrase in instruction for phrase in ["具体", "详细", "一步步", "step by step", "详细说明"]):
+        complexity = "complex"
+    elif len(words) <= 8:
+        complexity = "simple"
+    else:
+        complexity = "medium"
     
     missing = []
     assumptions = []
     risks = []
     
-    # Complexity-based analysis
     if complexity == "simple":
-        # For simple tasks, only note if something critical is missing
         if instr_type == "code":
             if "python" not in instruction_lower and "js" not in instruction_lower:
                 assumptions.append("Language not specified")
-        return {
-            "missing": missing,
-            "assumptions": assumptions,
-            "risks": risks,
-            "word_count": len(words),
-            "instruction_type": instr_type,
-            "language": lang,
-            "task_complexity": complexity,
-        }
+        return AnalysisResult(
+            missing=missing,
+            assumptions=assumptions,
+            risks=risks,
+            word_count=len(words),
+            instruction_type=instr_type,
+            language=lang,
+            task_complexity=complexity,
+        )
     
-    # Medium/Complex tasks - note what's missing
     if len(words) < 5:
         missing.append("Context too brief")
     
     if instr_type == "code":
-        if not any(lang in instruction_lower for lang in ["python", "javascript", "java", "sql", "api"]):
+        if not any(l in instruction_lower for l in ["python", "javascript", "java", "sql", "api"]):
             missing.append("Language/framework not specified")
     
     if instr_type == "writing":
-        if instr_type == "writing" and not any(w in instruction_lower for w in ["收件", "recipient", "对象"]):
+        if not any(w in instruction_lower for w in ["收件", "recipient", "对象"]):
             assumptions.append("Audience not specified")
     
-    return {
-        "missing": missing,
-        "assumptions": assumptions,
-        "risks": risks,
-        "word_count": len(words),
-        "instruction_type": instr_type,
-        "language": lang,
-        "task_complexity": complexity,
-    }
-
-# =============================================================================
-# Output Generation - Direct when possible
-# =============================================================================
-
-# DEPRECATED: These functions generated content directly instead of optimized prompts.
-# Use generate_fallback_prompt() or generate_with_llm() instead.
-# (generate_direct_code, generate_direct_explanation, generate_direct_writing removed)
+    return AnalysisResult(
+        missing=missing,
+        assumptions=assumptions,
+        risks=risks,
+        word_count=len(words),
+        instruction_type=instr_type,
+        language=lang,
+        task_complexity=complexity,
+    )
 
 
 # =============================================================================
-# Fallback: Structured Prompt Templates (no LLM required)
+# Fallback Prompt Templates (no LLM required, preserved for simple cases)
 # =============================================================================
 
-# ---------------------------------------------------------------------------#
-# Smart default inference engine for fallback prompts
-# Maps common task keywords → reasonable default specifications
-# ---------------------------------------------------------------------------#
-
-# Code task inference map: (keywords) → (language, input, output, constraints)
+# Code task inference map
 _CODE_DEFAULTS = {
-    # JSON array / list processing
     ("json", "数组", "list"): {
         "lang": "Python",
         "input": "JSON 数组或 Python 列表",
         "output": "数值（平均值）",
         "constraints": "时间复杂度 O(n)，空间复杂度 O(1)",
         "boundary": "空数组返回 0 或空列表",
-        "optional": "支持嵌套数组？支持过滤条件？",
     },
-    # Square / power
     ("平方", "square", "幂", "power"): {
         "lang": "Python",
         "input": "数值或列表",
         "output": "数值或列表（平方）",
         "constraints": "时间复杂度 O(n)",
         "boundary": "负数平方、正负数混合列表",
-        "optional": "支持复数？支持矩阵？",
     },
-    # Sorting
     ("排序", "sort"): {
         "lang": "Python",
         "input": "整数数组，长度 1-100000，元素范围 0-10^9",
         "output": "升序排列的整数数组",
         "constraints": "平均时间复杂度 O(n log n)，空间复杂度 O(log n)",
-        "boundary": "空数组返回空数组，大数组需避免栈溢出",
-        "optional": "归并排序？堆排序？支持自定义比较函数？",
+        "boundary": "空数组返回空数组",
     },
-    # Binary search
     ("二分", "binary search"): {
         "lang": "Python",
         "input": "有序整数数组 + 目标值",
         "output": "目标值的下标（不存在返回 -1）",
         "constraints": "时间复杂度 O(log n)",
         "boundary": "数组为空、目标不存在、单元素数组",
-        "optional": "返回第一个/最后一个匹配位置？",
     },
-    # Fibonacci / DP
     ("斐波那契", "fibonacci", "dp", "动态规划"): {
         "lang": "Python",
         "input": "整数 n（0 ≤ n ≤ 1000）",
         "output": "第 n 个斐波那契数",
-        "constraints": "时间复杂度 O(n)，空间复杂度 O(1)（滚动数组）",
-        "boundary": "n=0, n=1, n 特别大（考虑大数）",
-        "optional": "记忆化递归？矩阵快速幂？",
+        "constraints": "时间复杂度 O(n)，空间复杂度 O(1)",
+        "boundary": "n=0, n=1, n 特别大",
     },
-    # Login / Auth
     ("登录", "login", "登陆", "auth"): {
         "lang": "Python + Flask",
         "input": "用户名（字符串）+ 密码（字符串）",
         "output": "成功返回 JWT token，失败返回错误信息",
         "constraints": "密码需 bcrypt 哈希存储，JWT 有效期 24h",
         "boundary": "用户不存在、密码错误、账号锁定",
-        "optional": "第三方登录（微信/Google）？注册功能？",
     },
-    # API endpoint
     ("api", "接口", "endpoint", "rest"): {
         "lang": "Python + Flask / FastAPI",
         "input": "HTTP 请求参数（JSON/query/path）",
         "output": "JSON 响应 {code, message, data}",
         "constraints": "RESTful 规范，状态码正确，参数校验",
         "boundary": "参数缺失、格式错误、未授权访问",
-        "optional": "分页？限流？文档（Swagger）？",
-    },
-    # Linked list
-    ("链表", "linked list"): {
-        "lang": "Python",
-        "input": "链表节点值数组 + 操作类型",
-        "output": "操作后的链表或结果值",
-        "constraints": "需处理环检测、O(1) 空间（不允许修改节点）",
-        "boundary": "空链表、单节点、环、循环链表",
-        "optional": "反转链表？检测环？合并有序链表？",
-    },
-    # Tree / BST
-    ("树", "tree", "bst", "二叉树"): {
-        "lang": "Python",
-        "input": "树的节点值列表（如层序数组）",
-        "output": "遍历结果或操作结果",
-        "constraints": "递归实现需防栈溢出，大树用迭代",
-        "boundary": "空树、单节点、退化为链表",
-        "optional": "前/中/后序遍历？层序遍历？求深度？",
-    },
-    # Hash / Dict
-    ("哈希", "hash", "字典", "dict"): {
-        "lang": "Python",
-        "input": "键值对数组或字符串",
-        "output": "哈希表或操作结果",
-        "constraints": "处理哈希冲突（链地址法或开放地址）",
-        "boundary": "键不存在、重复键、负载因子过大",
-        "optional": "自定义哈希函数？扩容策略？",
-    },
-    # Graph
-    ("图", "graph", "最短路径", "dijkstra"): {
-        "lang": "Python",
-        "input": "邻接表或邻接矩阵表示的图",
-        "output": "最短路径长度或路径本身",
-        "constraints": "时间复杂度 O((V+E) log V) for Dijkstra",
-        "boundary": "图不连通、负权边、单源或多源",
-        "optional": "BFS？Floyd-Warshall？拓扑排序？",
-    },
-    # Stack / Queue
-    ("栈", "stack", "队列", "queue"): {
-        "lang": "Python",
-        "input": "操作序列或初始数据",
-        "output": "操作后的栈/队列状态或顶部/队首元素",
-        "constraints": "线程安全？容量限制？",
-        "boundary": "空栈/空队列、溢出",
-        "optional": "单调栈？循环队列？优先队列（堆）？",
-    },
-    # Database / SQL
-    ("数据库", "sql", "db", "增删改查", "crud"): {
-        "lang": "Python + SQL",
-        "input": "表结构 + 查询条件或数据",
-        "output": "查询结果或受影响的行数",
-        "constraints": "防止 SQL 注入，使用参数化查询",
-        "boundary": "表为空、结果为空、并发写入冲突",
-        "optional": "事务？索引？分页查询？",
-    },
-    # Cache
-    ("缓存", "cache", "lru"): {
-        "lang": "Python",
-        "input": "缓存容量 + 操作序列（get/put）",
-        "output": "LRU 缓存操作结果",
-        "constraints": "O(1) 时间复杂度",
-        "boundary": "容量满、key 不存在、相同 key 重复访问",
-        "optional": "LFU？TTL 过期？并发缓存？",
-    },
-    # String manipulation
-    ("字符串", "string", "正则", "regex"): {
-        "lang": "Python",
-        "input": "输入字符串",
-        "output": "处理后的字符串",
-        "constraints": "Unicode 处理、大字符串高效",
-        "boundary": "空字符串、特殊字符、超长输入",
-        "optional": "正则表达式？KMP？马拉车算法？",
     },
 }
 
@@ -649,218 +622,98 @@ def _infer_code_defaults(instruction: str) -> dict | None:
     return None
 
 
-def generate_inferred_prompt_via_llm(instruction: str, instruction_type: str) -> str | None:
-    """
-    When rule-based matching fails, use LLM to infer context and fill a structured template.
-    Returns None if no API key is available.
-    """
-    cfg = get_llm_config()
-    api_key = cfg.get("llm_api_key")
-    if not api_key:
-        return None
-
-    model = cfg.get("llm_model", "gpt-4")
-    endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
-
-    type_labels = {
-        "code": "编程/算法任务",
-        "code_review": "代码审查/分析",
-        "test_generation": "测试代码生成",
-        "writing": "写作任务",
-        "explanation": "解释/说明",
-        "general": "通用任务",
+def _extract_info(instruction: str) -> dict:
+    """Extract useful info from instruction for template filling."""
+    info = {
+        "topic": None,
+        "depth": "扫盲科普",
+        "style": "通俗易懂",
+        "audience": "一般读者",
+        "format": "文章",
+        "language": "中文",
+        "analogy": "用生活中的例子说明",
+        "tone": "通俗易懂，适合科普",
     }
-    label = type_labels.get(instruction_type, "通用任务")
+    inst_stripped = _strip_emoji(instruction)
+    inst_lower = inst_stripped.lower()
 
-    llm_prompt = f"""用户想要完成以下{label}，但描述比较模糊：
+    topic_keywords = {
+        "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
+        "区块链": "区块链", "比特币": "区块链",
+        "Python": "Python", "Java": "Java", "Go": "Go",
+        "机器学习": "机器学习", "深度学习": "深度学习",
+        "大模型": "大模型", "LLM": "大语言模型",
+        "云计算": "云计算", "边缘计算": "边缘计算",
+        "物联网": "物联网", "5G": "5G",
+        "网络安全": "网络安全", "黑客": "网络安全",
+        "量子计算": "量子计算", "量子": "量子计算",
+    }
+    for kw, label in topic_keywords.items():
+        if kw in inst_lower or kw in inst_stripped:
+            info["topic"] = label
+            break
+    if info["topic"] is None:
+        words = inst_stripped.split()
+        info["topic"] = " ".join(words[:5]) if len(words) > 3 else inst_stripped
+        if not info["topic"] or info["topic"].strip(" ，、.") == "":
+            info["topic"] = "该主题"
 
-{instruction}
+    if any(w in inst_lower for w in ["专业", "深入", "高级", "源码", "原理"]):
+        info["depth"] = "深入专业"
+        info["style"] = "专业严谨"
+    if any(w in inst_lower for w in ["通俗", "入门", "扫盲", "科普", "小白"]):
+        info["depth"] = "扫盲科普"
+        info["style"] = "通俗易懂"
+    if any(w in inst_lower for w in ["生活中的例子", "生活例子", "日常", "实例"]):
+        info["analogy"] = "用生活中的例子说明"
+        info["style"] = "通俗易懂，有生活气息"
 
-请根据你的深度推理能力，填充以下结构化模板（根据任务类型选择合适的章节）：
+    if any(w in inst_lower for w in ["工程师", "developer", "程序员", "技术", "码农"]):
+        info["audience"] = "技术人员/工程师"
+    elif any(w in inst_lower for w in ["老板", "管理层", "manager", "高管"]):
+        info["audience"] = "管理层/决策者"
+    elif any(w in inst_lower for w in ["客户"]):
+        info["audience"] = "客户"
+    elif any(w in inst_lower for w in ["学生", "小白", "入门"]):
+        info["audience"] = "初学者/学生"
+    else:
+        info["audience"] = f"一般读者，对{info['topic']}有基本了解"
 
-## 🎯 任务
-[根据 instruction 推断的精确任务描述]
+    if any(w in inst_lower for w in ["博客", "文章", "帖子", "公众号"]):
+        info["format"] = "博客文章"
+    elif any(w in inst_lower for w in ["邮件", "email", "邮件"]):
+        info["format"] = "邮件"
+    elif any(w in inst_lower for w in ["报告", "分析"]):
+        info["format"] = "分析报告"
+    elif any(w in inst_lower for w in ["PPT", "演示", "演讲"]):
+        info["format"] = "演示文稿"
 
-## 📥 输入
-- 类型：[推断的数据类型]
-- 范围：[推断的数据规模/范围]
-- 示例：[一个具体示例]
+    if any(w in inst_stripped for w in ["英文", "English", "用英语", "write in english"]):
+        info["language"] = "英文"
 
-## 📤 输出
-- 类型：[推断的输出类型]
-- 示例：[对应的输出示例]
+    if "专业" in inst_lower or "正式" in inst_lower:
+        info["tone"] = "专业正式"
+    elif "轻松" in inst_lower or "活泼" in inst_lower:
+        info["tone"] = "轻松活泼"
+    elif "亲切" in inst_lower:
+        info["tone"] = "亲切友善"
+    elif "通俗" in inst_lower or "科普" in inst_lower or "小白" in inst_lower:
+        info["tone"] = "通俗易懂，适合科普"
 
-## ⚡ 性能要求（如适用）
-- 时间复杂度：[如有要求]
-- 空间复杂度：[如有要求]
-
-## 🛡️ 边界情况
-- [从 instruction 推断的边界情况]
-
-直接输出填充好的模板内容，不要解释。"""
-
-    try:
-        response = requests.post(
-            endpoint,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "你是一个专业的 prompt 工程专家。直接输出填充好的模板，不要解释你的思考过程。"},
-                    {"role": "user", "content": llm_prompt},
-                ],
-                "temperature": 0.3,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return None
+    return info
 
 
 def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
     """
-    不用 LLM 时，生成结构化的 prompt 文本模板。
-    对于常见任务类型，智能推断合理的默认规范，减少用户填写负担。
-    绝不输出空白占位符，所有推断必须有实际值。
-    当规则匹配失败且 LLM API key 可用时，调用 LLM 推断并填充模板。
+    Fallback template-based prompt generation (no LLM).
+    Used only when API key is not configured.
     """
-    # ---- Auto-fill tone/audience from instruction for writing tasks ----
-    def _extract_tone(instruction: str) -> str:
-        instruction_lower = instruction.lower()
-        tones = []
-        if "专业" in instruction_lower:
-            tones.append("专业")
-        if any(w in instruction_lower for w in ["友善", "友好"]):
-            tones.append("友善")
-        if any(w in instruction_lower for w in ["轻松", "活泼"]):
-            tones.append("轻松")
-        if "正式" in instruction_lower:
-            tones.append("正式")
-        if "亲切" in instruction_lower:
-            tones.append("亲切")
-        return "".join(tones) if tones else "[根据受众和场景选择]"
-
-    def _extract_audience(instruction: str) -> str:
-        if any(w in instruction.lower() for w in ["工程师", "developer", "程序员", "技术"]):
-            return "工程师/技术人员"
-        if any(w in instruction for w in ["老板", "管理层", "manager"]):
-            return "管理层/决策者"
-        if any(w in instruction for w in ["客户", "客户"]):
-            return "客户"
-        if any(w in instruction for w in ["用户", "使用者"]):
-            return "终端用户"
-        return "[描述读者背景、职业、关注点]"
-
-    # ---- Extract useful info from instruction ----
-    def _extract_info(instruction: str) -> dict:
-        """从指令中提取主题、风格、受众等有用信息，用于填充模板占位符。"""
-        info = {
-            "topic": None,
-            "depth": "扫盲科普",
-            "style": "通俗易懂",
-            "audience": "一般读者",
-            "format": "文章",
-            "language": "中文",
-            "analogy": "用生活中的例子说明",
-            "tone": "通俗易懂，适合科普",
-        }
-        # Strip emoji for analysis to prevent interference
-        inst_stripped = _strip_emoji(instruction)
-        inst_lower = inst_stripped.lower()
-
-        # 提取主题关键词 (expanded mapping)
-        topic_keywords = {
-            "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
-            "区块链": "区块链", "比特币": "区块链",
-            "Python": "Python", "Java": "Java", "Go": "Go",
-            "机器学习": "机器学习", "深度学习": "深度学习",
-            "大模型": "大模型", "LLM": "大语言模型",
-            "云计算": "云计算", "边缘计算": "边缘计算",
-            "物联网": "物联网", "5G": "5G",
-            "网络安全": "网络安全", "黑客": "网络安全",
-            "量子计算": "量子计算", "量子": "量子计算",
-            "blockchain": "区块链 (Blockchain)", "bitcoin": "比特币",
-            "machine learning": "机器学习", "deep learning": "深度学习",
-            "llm": "大语言模型", "cloud computing": "云计算",
-            "quantum computing": "量子计算", "iot": "物联网",
-        }
-        for kw, label in topic_keywords.items():
-            if kw in inst_lower or kw in inst_stripped:
-                info["topic"] = label
-                break
-        if info["topic"] is None:
-            # Bug 1 fix: use stripped text (no emoji), and for English preserve full words
-            # Use first 3-5 significant words as topic summary
-            words = inst_stripped.split()
-            if len(words) <= 3:
-                info["topic"] = inst_stripped
-            else:
-                # Take first 5 words max to avoid overly long topics
-                info["topic"] = " ".join(words[:5])
-            # If still nothing, use a generic label
-            if not info["topic"] or info["topic"].strip(" ，、.") == "":
-                info["topic"] = "该主题"
-
-        # 推断深度和风格
-        if any(w in inst_lower for w in ["专业", "深入", "高级", "源码", "原理"]):
-            info["depth"] = "深入专业"
-            info["style"] = "专业严谨"
-        if any(w in inst_lower for w in ["通俗", "入门", "扫盲", "科普", "小白"]):
-            info["depth"] = "扫盲科普"
-            info["style"] = "通俗易懂"
-        if any(w in inst_lower for w in ["生活中的例子", "生活例子", "日常", "实例"]):
-            info["analogy"] = "用生活中的例子说明"
-            info["style"] = "通俗易懂，有生活气息"
-
-        # 推断受众
-        if any(w in inst_lower for w in ["工程师", "developer", "程序员", "技术", "码农"]):
-            info["audience"] = "技术人员/工程师"
-        elif any(w in inst_lower for w in ["老板", "管理层", "manager", "高管"]):
-            info["audience"] = "管理层/决策者"
-        elif any(w in inst_lower for w in ["客户"]):
-            info["audience"] = "客户"
-        elif any(w in inst_lower for w in ["用户", "使用者"]):
-            info["audience"] = "终端用户"
-        elif any(w in inst_lower for w in ["学生", "小白", "入门"]):
-            info["audience"] = "初学者/学生"
-        else:
-            info["audience"] = f"一般读者，对{info['topic']}有基本了解"
-
-        # 推断写作格式
-        if any(w in inst_lower for w in ["博客", "文章", "帖子", "公众号"]):
-            info["format"] = "博客文章"
-        elif any(w in inst_lower for w in ["邮件", "email", "邮件"]):
-            info["format"] = "邮件"
-        elif any(w in inst_lower for w in ["报告", "分析"]):
-            info["format"] = "分析报告"
-        elif any(w in inst_lower for w in ["PPT", "演示", "演讲"]):
-            info["format"] = "演示文稿"
-
-        # 推断语言 (Bug 1 fix: use stripped text for language inference)
-        if any(w in inst_stripped for w in ["英文", "English", "用英语", "write in english"]):
-            info["language"] = "英文"
-
-        # 推断语气
-        if "专业" in inst_lower or "正式" in inst_lower:
-            info["tone"] = "专业正式"
-        elif "轻松" in inst_lower or "活泼" in inst_lower:
-            info["tone"] = "轻松活泼"
-        elif "亲切" in inst_lower:
-            info["tone"] = "亲切友善"
-        elif "通俗" in inst_lower or "科普" in inst_lower or "小白" in inst_lower:
-            info["tone"] = "通俗易懂，适合科普"
-
-        return info
+    stripped = instruction.strip()
+    lang = detect_language(instruction)
 
     if instruction_type == "code_review":
         return f"""## 🎯 任务
-审查以下代码：{instruction}
+审查以下代码：{stripped}
 
 ## 🔍 待审查代码
 [请提供代码，或描述代码所在模块/功能]
@@ -879,7 +732,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 
     if instruction_type == "test_generation":
         return f"""## 🎯 任务
-为以下代码编写单元测试：{instruction}
+为以下代码编写单元测试：{stripped}
 
 ## 🔍 待测代码
 [从上下文中推断或描述]
@@ -894,581 +747,15 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - 覆盖核心逻辑路径"""
 
     if instruction_type == "code":
-        defaults = _infer_code_defaults(instruction)
+        defaults = _infer_code_defaults(stripped)
         if defaults:
-            # Smart inferred fallback — has real content, no placeholders
-            lang = defaults['lang']
-            task_desc = instruction
-
-            # Build performance section
-            perf_parts = []
-            if '时间复杂度' in defaults.get('constraints', ''):
-                perf_parts.append(defaults['constraints'])
-            if '边界' in defaults and defaults['boundary']:
-                perf_parts.append(f"边界：{defaults['boundary']}")
-
-            # Build boundary section from defaults
-            boundary_map = {
-                ('排序', 'sort'): "- 空数组 → 返回 []\n- 单元素 → 返回 [x]\n- 重复元素 → 保持相对顺序",
-                ('登录', 'login', '登陆', 'auth'): "- 用户不存在 → 返回明确错误信息\n- 密码错误 → 提示「密码错误」，不暴露具体原因\n- 账号锁定 → 锁定后需管理员解锁或等待 30 分钟",
-                ('斐波那契', 'fibonacci', 'dp', '动态规划'): "- n = 0 → 返回 0\n- n = 1 → 返回 1\n- n 特别大 → 使用大数运算或矩阵快速幂",
-                ('二分', 'binary search'): "- 数组为空 → 返回 -1\n- 目标不存在 → 返回 -1\n- 单元素数组 → 直接比较",
-            }
-            for kws, boundary_text in boundary_map.items():
-                if any(kw in instruction.lower() for kw in kws):
-                    boundary = boundary_text
-                    break
-            else:
-                boundary = defaults.get('boundary', '请补充边界情况处理')
-
-            _default_constraints = '时间复杂度：O(n)\n- 空间复杂度：O(1)'
-            perf_section = f"- {defaults.get('constraints', _default_constraints)}"
-
-            # Detect if this is a sorting-like task
-            is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
+            lang_default = defaults['lang']
+            perf = defaults.get('constraints', '时间复杂度：O(n)\n- 空间复杂度：O(1)')
+            boundary = defaults.get('boundary', '请补充边界情况处理')
+            
+            is_sorting = any(kw in stripped.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
             if is_sorting:
                 return f"""## 🎯 任务
-用 {lang} 实现快速排序算法
-
-## 📥 输入
-- 类型：整数数组
-- 范围：长度 1-100000，元素 0-10^9
-- 示例：[3, 6, 8, 10, 1, 2, 1]
-
-## 📤 输出
-- 类型：整数数组（升序）
-- 示例：[1, 1, 2, 3, 6, 8, 10]
-
-## ⚡ 性能要求
-- 时间复杂度：O(n log n)（平均），O(n²)（最坏）
-- 空间复杂度：O(log n)
-
-## 🛡️ 边界情况
-{boundary}"""
-
-            # Detect login/auth
-            is_login = any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth'))
-            if is_login:
-                return f"""## 🎯 任务
-用 {lang} 实现用户认证系统，支持登录
-
-## 📥 输入
-- 用户名（字符串，3-20 字符）
-- 密码（字符串，8-32 字符，明文输入）
-
-## 📤 输出
-- 成功：返回 JWT token（有效期 24 小时）
-- 失败：返回明确错误信息
-
-## ⚡ 性能要求
-- 密码验证：bcrypt 哈希（每条密码验证 < 100ms）
-- JWT 签发：< 10ms
-
-## 🛡️ 边界情况
-{boundary}"""
-
-            # Generic code fallback with real defaults
-            # Bug 2 fix: extract instruction-specific output requirements
-            instr_lower = instruction.lower()
-            specific_reqs = []
-            if any(w in instr_lower for w in ['平均', 'average', 'mean']):
-                specific_reqs.append('计算平均值')
-            if any(w in instr_lower for w in ['保留', 'round', 'decimal', 'precision']):
-                import re
-                prec_match = re.search(r'(\d+)\s*位|保留(\d+)', instr_lower)
-                if prec_match:
-                    digits = prec_match.group(1) or prec_match.group(2)
-                    specific_reqs.append(f'保留 {digits} 位小数')
-                else:
-                    specific_reqs.append('保留指定小数位数')
-            if any(w in instr_lower for w in ['求和', 'sum', '合计']):
-                specific_reqs.append('计算总和')
-            if any(w in instr_lower for w in ['最大', 'max', '最小', 'min']):
-                specific_reqs.append('找最大/最小值')
-            if any(w in instr_lower for w in ['去重', 'unique', 'distinct']):
-                specific_reqs.append('去重处理')
-            if any(w in instr_lower for w in ['排序', 'sort', '升序', '降序']):
-                specific_reqs.append('排序处理')
-            
-            output_desc = defaults.get('output', '根据任务目标确定')
-            if specific_reqs:
-                output_desc = ' + '.join(specific_reqs)
-            
-            return f"""## 🎯 任务
-用 {lang} 实现：{task_desc}
-
-## 📥 输入
-- {defaults.get('input', '由调用方提供')}
-
-## 📤 输出
-- {output_desc}
-
-## ⚡ 性能要求
-{perf_section}
-
-## 🛡️ 边界情况
-{boundary}"""
-        else:
-            # Try LLM inference when rule-based matching fails
-            llm_result = generate_inferred_prompt_via_llm(instruction, instruction_type)
-            if llm_result:
-                return llm_result
-            # Generic fallback — still has some structure, no blank [请补充]
-            return f"""## 🎯 任务
-用 Python 实现：{instruction}
-
-## 📥 输入
-- 类型：[请描述输入数据类型和格式]
-- 范围：[请描述数据范围或规模]
-- 示例：[提供一个具体输入示例]
-
-## 📤 输出
-- 类型：[请描述输出数据类型和格式]
-- 示例：[提供对应的输出示例]
-
-## ⚡ 性能要求
-- 时间复杂度：[如有要求，如 O(n log n)]
-- 空间复杂度：[如有要求]
-
-## 🛡️ 边界情况
-- 空输入 →
-- 异常值 →
-- 大规模数据 →"""
-    # ---- Email-specific sub-types ----
-    elif instruction_type == "rejection_email":
-        return f"""## 🎯 任务
-写一封拒绝候选人的邮件
-
-## 📧 邮件结构
-1. **称呼**（感谢投递，如"尊敬的张三同学"）
-2. **开场**（简短感谢参加面试）
-3. **正文**（面试反馈，1-2 句正面评价）
-4. **拒绝**（委婉表达"暂不推进"，可选具体原因）
-5. **祝福**（祝愿职业发展）
-6. **签名**（发件人姓名、职位、日期）
-
-## ✍️ 语气要求
-- 专业友善，不伤人
-- 简洁明了，不留模糊希望
-- 不用"很遗憾""抱歉"等过度负面词
-
-## ✅ 参考模板
-尊敬的 [姓名]：
-
-感谢您参加 [公司名称] [职位名称] 的面试。
-
-[简短正面评价，如：您的技术能力和项目经验给我们留下了深刻印象。]
-
-经过慎重考虑，我们决定暂不推进您的申请。[可选原因：目前团队需求不匹配 / 已有更合适的候选人]
-
-再次感谢您的时间和努力。祝愿您未来职业发展顺利！
-
-此致
-[姓名]
-[职位]
-[日期]"""
-
-    elif instruction_type == "apology_email":
-        return f"""## 🎯 任务
-写一封道歉邮件
-
-## 📧 邮件结构
-1. **称呼**
-2. **承认问题**（简明说明发生了什么问题）
-3. **说明原因**（如不适合展开，可简略带过）
-4. **道歉**（真诚、具体）
-5. **补救措施**（打算如何弥补或防止再犯）
-6. **承诺/邀请反馈**
-7. **签名**
-
-## ✍️ 语气要求
-- 真诚，不找借口，不过度解释
-- 具体说明对什么道歉
-- 提出切实补救措施
-- 不要用"但是""不过"等转折词削弱道歉诚意
-
-## ✅ 参考模板
-尊敬的 [收件人]：
-
-就 [具体事件/问题] 而言，我们对此给您带来的不便深表歉意。
-
-[简要说明发生了什么，及原因（如合适）]
-
-我们对这次的问题负全部责任，对此深感抱歉。
-
-为弥补此次失误，我们[将采取的补救措施，如：全额退款 / 已安排重新发货 / 已加强内部审核流程]。
-
-如您有任何进一步的疑问或建议，请随时与我们联系。
-
-此致
-[姓名]
-[职位]
-[日期]"""
-
-    elif instruction_type == "notification_email":
-        return f"""## 🎯 任务
-写一封团队/组织内部通知邮件
-
-## 📧 邮件结构
-1. **标题**（简洁明了，一眼看出内容）
-2. **称呼**（如"各位同事""团队成员"等）
-3. **正文**（通知内容，重要信息靠前）
-   - 事件/决定说明
-   - 关键信息（时间/地点/人员）
-   - 原因/背景（如需要）
-4. **行动要求**（需要收件人做什么，清晰列出）
-5. **联系方式**（如有疑问联系谁）
-6. **签名**
-
-## ✍️ 语气要求
-- 清晰、准确、不含糊
-- 重要信息加粗或列点
-- 行动要求明确（谁、何时、如何）
-- 正式但不冷漠
-
-## ✅ 参考模板
-**主题：[通知标题，如"关于 Q2 季度会议的通知"]**
-
-各位同事：
-
-[通知核心内容，1-2 段说明：什么事、时间、地点、谁参加]
-
-**请注意：**
-- [关键要点 1]
-- [关键要点 2]
-
-如有疑问，请联系 [联系人姓名]（[联系方式]）。
-
-感谢大家的配合！
-
-[姓名]
-[部门/职位]
-[日期]"""
-
-    elif instruction_type == "complaint_email":
-        return f"""## 🎯 任务
-回复一封客户投诉邮件
-
-## 📧 邮件结构
-1. **称呼**（感谢来信，表明收到）
-2. **确认问题**（复述客户投诉的核心问题，显示理解）
-3. **道歉**（对造成的不便真诚道歉）
-4. **调查说明**（我们已采取/正在采取的措施）
-5. **解决方案**（具体补救/赔偿方案）
-6. **预防承诺**（如何防止类似问题再发生）
-7. **邀请反馈**（是否满意解决方案）
-8. **签名**
-
-## ✍️ 语气要求
-- 真诚倾听，不防御
-- 不推卸责任
-- 解决方案具体、可操作
-- 表达继续服务的诚意
-
-## ✅ 参考模板
-尊敬的 [客户姓名]：
-
-感谢您向我们反馈 [问题描述，如"订单延迟交付的问题"]。
-
-我们已确认问题：[复述客户投诉的核心]
-
-对此给您带来的不便，我们深表歉意。
-
-我们已经 [已采取的措施，如：紧急补发商品 / 退还运费 / 给予补偿优惠券]。
-
-为防止类似问题再次发生，我们 [预防措施，如：已升级库存管理系统 / 已与物流公司沟通加强时效]。
-
-如果您对以上解决方案有任何疑问，欢迎随时联系我们。
-
-此致
-[姓名]
-[职位]
-[公司名称]
-[日期]"""
-
-    elif instruction_type == "report_email":
-        return f"""## 🎯 任务
-写一份工作周报/月报
-
-## 📧 周报/报告结构
-1. **标题**（如"[姓名] [2024-01-01 ~ 2024-01-05] 周报"）
-2. **本周完成**（列出 3-5 项已完成任务，含结果/产出）
-3. **进行中**（正在推进的任务及当前进度 %）
-4. **下周计划**（预计开展的工作）
-5. **风险/阻塞**（如有，列出阻碍和需要的支持）
-6. **数据指标**（如有 KPI，数据可视化或列点）
-
-## ✍️ 风格要求
-- 结果导向（不说"做了什么"，说"做成了什么"）
-- 量化成果（完成 5 个功能 / 提升转化率 10%）
-- 简洁，每条不超过 2 行
-- 诚实报告风险，不报喜不报忧
-
-## ✅ 参考模板
-**主题：[姓名] 周报 | [日期区间]**
-
-各位好，以下是本周工作汇报：
-
-**✅ 本周完成**
-- [任务 1] — [结果/产出，如"完成用户登录模块开发，已上线"]
-- [任务 2] — [结果]
-- [任务 3] — [结果]
-
-**🔄 进行中**
-- [任务 A] — 当前进度 60%，预计 [日期] 完成
-- [任务 B] — 等待 [阻塞因素]，需要 [支持]
-
-**📅 下周计划**
-- [计划 1]
-- [计划 2]
-
-**⚠️ 风险/需要支持**
-- [风险描述 + 需要的帮助]
-
-[姓名] | [部门] | [日期]"""
-
-    # ---- Creative Writing Template (Bug 3 fix) ----
-    elif instruction_type == "creative_writing":
-        info = _extract_info(instruction)
-        topic = info["topic"]
-        return f"""## 🎯 创作任务
-{instruction}
-
-## 📖 题材与形式
-- 类型：[小说/散文/短篇/科幻/奇幻/悬疑/剧本/其他]
-- 风格：[如 轻松幽默/紧张悬疑/文艺小清新/硬核科幻]
-- 视角：[第一人称/第三人称/上帝视角/多视角]
-
-## 👥 目标读者
-- 受众群体：{info['audience']}
-- 期待体验：读者读完后的情感共鸣或收获
-
-## 🏗️ 结构要求
-- 开头：先声夺人，从第一句话就抓住读者
-- 发展：通过冲突/情节推进故事
-- 结尾：令人回味/出乎意料/留白
-
-## ✍️ 写作风格
-- 语气：{info['tone']}
-- 语言：{info['language']}
-- 篇幅：短篇 1000-3000 字 / 中篇 5000-10000 字 / 长篇（章节大纲）
-
-## 🎬 参考场景（可选）
-- 设定背景：[如 22世纪火星城市 / 近未来东京 / 赛博朋克上海]
-- 关键元素：[如有特定元素必须包含]"""
-
-    # ---- Academic Writing Template (Bug 4 fix) ----
-    elif instruction_type == "academic_writing":
-        info = _extract_info(instruction)
-        topic = info["topic"]
-        return f"""## 🎯 学术写作任务
-{instruction}
-
-## 📄 文章类型
-- 类型：[文献综述/研究摘要/会议论文/学位论文章节/期刊文章]
-- 学术领域：[如 计算机科学/医学/经济学/心理学]
-- 目标期刊/会议：[如有任何要求]
-
-## 📋 摘要结构（按顺序）
-1. **背景**（1-2句）：该领域现状和研究空白
-2. **目的/研究问题**（1句）：本文要解决什么问题
-3. **方法**（2-3句）：如何开展的（数据集/模型/实验/分析）
-4. **主要发现**（2-3句）：最重要的结果（量化优先）
-5. **结论**（1-2句）：意义、局限性、未来方向
-
-## ✍️ 写作规范
-- 语言：{info['language']}
-- 语气：学术严谨、客观、避免主观夸张
-- 时态：方法部分用过去时，发现部分用现在时
-- 篇幅：摘要通常 150-300 字（期刊要求为准）
-
-## ✅ 质量标准
-- 信息密度高，每句都有实质内容
-- 无废话，不解释常识
-- 缩写首次使用需展开"""
-
-    elif instruction_type == "writing":
-        info = _extract_info(instruction)
-        topic = info["topic"]
-        return f"""## 🎯 写作任务
-{instruction}
-
-## 👥 受众
-- 目标读者：{info['audience']}
-- 读者关心什么：{topic} 的核心价值和应用
-- 读者已知什么：对 {topic} 有基本了解
-
-## 🎯 核心信息
-- 主要观点：围绕 {topic} 展开，传达核心观点
-- 期望行动：让读者了解并能实际应用
-
-## 🎨 风格要求
-- 语气：{info['tone']}
-- 语言：{info['language']}
-- 篇幅：适中，一般 800-1500 字
-
-## 🏗️ 结构
-- 开头：先用问题或现象引入，吸引注意力
-- 主体：围绕 {topic} 的核心要点展开
-- 结尾：总结要点，行动号召或思考引导"""
-    elif instruction_type == "explanation":
-        info = _extract_info(instruction)
-        # Bug 6 fix: use _extract_core_concept to get clean concept name
-        core_concept = _extract_core_concept(instruction)
-        topic = info["topic"]
-        return f"""## 🎯 解释任务
-{instruction}
-
-## 👤 受众画像
-- 年龄/职业：{info['audience']}
-- 技术背景：一般读者，对 {core_concept} 有基本了解
-- 关心什么：{core_concept} 是什么、如何工作、有什么应用场景
-
-## 🔬 解释深度
-- 层次：{info['depth']}
-- 核心概念：{core_concept} 的定义、原理、应用场景
-
-## 🧩 讲解策略
-- 类比场景：{info['analogy']}
-- 讲解顺序：从已知到未知，逐步深入
-
-## ✅ 检验理解
-- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
-- 常见误解：{core_concept} 不是万能的，有其适用范围"""
-    else:
-        return f"""## 🎯 任务
-{instruction}
-
-## 📋 执行要求
-- 执行者：[AI / 专家 / 助手？]
-- 目标：[明确要达到什么]
-- 约束条件：[如有]
-
-## ✅ 质量标准
-- 什么样的结果算好：[描述标准]
-- 参考案例：[有的话提供]"""
-
-
-# =============================================================================
-# Technique Recommendations
-# =============================================================================
-
-def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[str, str]:
-    """
-    Return (applicable_techniques, examples) for a given instruction type.
-    """
-    recommendations = []
-    examples = []
-
-    if instr_type == "code":
-        recommendations.append("- Chain-of-Thought：先分析最优子结构再写")
-        recommendations.append("- Few-shot：给1-2个输入输出示例")
-        recommendations.append("- Role：扮演资深工程师")
-        # Few-shot example for code
-        if any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort')):
-            examples.append("输入：[3, 1, 2] → 输出：[1, 2, 3]")
-            examples.append("输入：[5, 2, 9, 1] → 输出：[1, 2, 5, 9]")
-        elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
-            examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
-            examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
-        else:
-            examples.append("# 正常用例 → 期望输出")
-            examples.append("# 边界用例 → 期望输出")
-
-    elif instr_type == "explanation":
-        recommendations.append("- Role：扮演耐心的老师")
-        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
-        recommendations.append("- Few-shot：给1个理解过程的示例")
-        # Few-shot example for explanation
-        examples.append('类比：把"区块链去中心化"比作"村民共同记账"，没有任何单一村民能篡改账本')
-        examples.append("类比：数据库索引就像书的目录，找到目标内容无需逐页翻找")
-
-    elif instr_type == "writing":
-        recommendations.append("- Few-shot：给1篇范文参考")
-        recommendations.append("- Chain-of-Thought：先列提纲再写")
-        recommendations.append("- Role：扮演专业文案撰写者")
-        # Few-shot example for writing
-        examples.append('风格参考：开头用"你是否也遇到过..."引发共鸣；正文分3点展开；结尾用"现在就试试..."号召行动')
-        examples.append('语气示例：面向程序员用"无需多余配置"；面向管理者用"节省50%时间"更具说服力')
-
-    elif instr_type in ("rejection_email", "notification_email", "complaint_email",
-                         "apology_email", "report_email"):
-        recommendations.append("- Few-shot：给1封同类邮件参考")
-        recommendations.append("- Role：扮演专业商务沟通顾问")
-        recommendations.append("- Chain-of-Thought：明确目的→组织结构→措辞选择")
-        examples.append("参考结构：称呼→开门见山→核心内容→积极收尾")
-
-    else:
-        recommendations.append("- Zero-shot：直接给出清晰指令")
-        recommendations.append("- Chain-of-Thought：分步骤描述任务")
-        recommendations.append("- Role：明确期望的执行者身份")
-
-    return "\n".join(recommendations), "\n".join(examples)
-
-
-# =============================================================================
-# Main Generator
-# =============================================================================
-
-def generate_optimized_versions(instruction: str, count: int = 3) -> list[VersionResult]:
-    """
-    Generate optimized prompt versions for the given instruction.
-    All versions output structured prompt TEXT (not direct content).
-    Uses generate_fallback_prompt for all email/writing subtypes to ensure
-    proper specialized templates are used (rejection_email, notification_email, etc.).
-    """
-    analysis = analyze_instruction(instruction)
-    instr_type = analysis["instruction_type"]
-    lang = analysis["language"]
-    stripped = instruction.strip()
-
-    # Email subtypes use generate_fallback_prompt for ALL versions since
-    # it already has complete, well-structured templates for each email type
-    EMAIL_TYPES = {
-        "rejection_email", "notification_email", "complaint_email",
-        "apology_email", "report_email"
-    }
-    SPECIALIZED_TYPES = EMAIL_TYPES | {"writing", "creative_writing", "academic_writing", "explanation", "code"}
-
-    versions = []
-
-    # Pre-compute technique recommendations for all versions
-    applicable_techniques, examples = get_technique_recommendations(instr_type, stripped)
-
-    # Version A: Structured template (baseline)
-    template_a = generate_fallback_prompt(stripped, instr_type)
-    versions.append({
-        "type": "A (Template)",
-        "description": "结构化 prompt 模板，引导补充关键信息",
-        "template": template_a,
-        "is_direct": False,
-        "applicable_techniques": applicable_techniques,
-        "examples": examples,
-    })
-
-    if count == 1:
-        return versions
-
-    # Version B: For specialized types, use fallback with more specificity
-    # For generic types, use a more detailed version
-    if instr_type in EMAIL_TYPES or instr_type in ("writing", "creative_writing", "academic_writing"):
-        # Email/writing: fallback template is already comprehensive; add a coaching note
-        template_b = generate_fallback_prompt(stripped, instr_type)
-        # Add coaching section for more detail
-        template_b += """
-
-## 🔍 进阶要点（Version B 补充）
-- 语气微调：[根据收件人身份调整，如 面试官/客户/上级]
-- 情感控制：[避免过度负面或过度热情]
-- 行动号召：[明确读者下一步该做什么]"""
-    elif instr_type == "code":
-        defaults = _infer_code_defaults(instruction) or {}
-        lang_default = defaults.get('lang', '[编程语言，如 Python]')
-        perf = defaults.get('constraints', '时间复杂度：O(n)\n- 空间复杂度：O(1)')
-        boundary = defaults.get('boundary', '请补充边界情况处理')
-        is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
-        if is_sorting:
-            template_b = f"""## 🎯 任务
 用 {lang_default} 实现快速排序算法
 
 ## 📥 输入
@@ -1488,8 +775,10 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 - 空数组 → 返回 []
 - 单元素 → 返回 [x]
 - 重复元素 → 保持相对顺序"""
-        elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
-            template_b = f"""## 🎯 任务
+            
+            is_login = any(kw in stripped.lower() for kw in ('登录', 'login', '登陆', 'auth'))
+            if is_login:
+                return f"""## 🎯 任务
 用 {lang_default} 实现用户认证系统，支持登录
 
 ## 📥 输入
@@ -1508,23 +797,12 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
 - 用户不存在 → 返回明确错误信息
 - 密码错误 → 提示「密码错误」，不暴露具体原因
 - 账号锁定 → 锁定后需等待 30 分钟"""
-        else:
-            # Bug 2 fix: extract specific requirements from instruction to differentiate outputs
-            instr_lower = instruction.lower()
-            specific_output = defaults.get('output', '根据任务目标确定')
-            # Extract specific requirements mentioned in the instruction
+
+            # Generic code fallback
+            instr_lower = stripped.lower()
             specific_reqs = []
             if any(w in instr_lower for w in ['平均', 'average', 'mean']):
                 specific_reqs.append('计算平均值')
-            if any(w in instr_lower for w in ['保留', 'round', '小数', 'decimal', 'precision']):
-                # Try to extract precision number
-                import re
-                prec_match = re.search(r'(\d+)\s*位|保留(\d+)', instr_lower)
-                if prec_match:
-                    digits = prec_match.group(1) or prec_match.group(2)
-                    specific_reqs.append(f'保留 {digits} 位小数')
-                else:
-                    specific_reqs.append('保留小数位数（指定精度）')
             if any(w in instr_lower for w in ['求和', 'sum', '合计']):
                 specific_reqs.append('计算总和')
             if any(w in instr_lower for w in ['最大', 'max', '最小', 'min']):
@@ -1534,71 +812,227 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
             if any(w in instr_lower for w in ['排序', 'sort', '升序', '降序']):
                 specific_reqs.append('排序处理')
             
+            output_desc = defaults.get('output', '根据任务目标确定')
             if specific_reqs:
-                specific_output = ' + '.join(specific_reqs)
+                output_desc = ' + '.join(specific_reqs)
             
-            template_b = f"""## 🎯 任务
+            return f"""## 🎯 任务
 用 {lang_default} 实现：{stripped}
 
 ## 📥 输入
 - {defaults.get('input', '由调用方提供')}
 
 ## 📤 输出
-- {specific_output}
+- {output_desc}
 
 ## ⚡ 性能要求
 - {perf}
 
 ## 🛡️ 边界情况
 {boundary}"""
-    elif instr_type == "explanation":
-        # Bug 6 fix: use _extract_core_concept to get clean concept name
+        else:
+            return f"""## 🎯 任务
+用 Python 实现：{stripped}
+
+## 📥 输入
+- 类型：[请描述输入数据类型和格式]
+- 范围：[请描述数据范围或规模]
+- 示例：[提供一个具体输入示例]
+
+## 📤 输出
+- 类型：[请描述输出数据类型和格式]
+- 示例：[提供对应的输出示例]
+
+## ⚡ 性能要求
+- 时间复杂度：[如有要求]
+- 空间复杂度：[如有要求]
+
+## 🛡️ 边界情况
+- 空输入 →
+- 异常值 →
+- 大规模数据 →"""
+
+    # Email types
+    if instruction_type == "rejection_email":
+        return f"""## 🎯 任务
+写一封拒绝候选人的邮件
+
+## 📧 邮件结构
+1. **称呼**（感谢投递，如"尊敬的张三同学"）
+2. **开场**（简短感谢参加面试）
+3. **正文**（面试反馈，1-2 句正面评价）
+4. **拒绝**（委婉表达"暂不推进"）
+5. **祝福**（祝愿职业发展）
+6. **签名**（发件人姓名、职位、日期）
+
+## ✍️ 语气要求
+- 专业友善，不伤人
+- 简洁明了，不留模糊希望
+- 不用"很遗憾""抱歉"等过度负面词"""
+
+    if instruction_type == "apology_email":
+        return f"""## 🎯 任务
+写一封道歉邮件
+
+## 📧 邮件结构
+1. **称呼**
+2. **承认问题**（简明说明发生了什么问题）
+3. **说明原因**（如不适合展开，可简略带过）
+4. **道歉**（真诚、具体）
+5. **补救措施**（打算如何弥补或防止再犯）
+6. **邀请反馈**
+7. **签名**
+
+## ✍️ 语气要求
+- 真诚，不找借口，不过度解释
+- 具体说明对什么道歉
+- 提出切实补救措施"""
+
+    if instruction_type == "notification_email":
+        return f"""## 🎯 任务
+写一封团队/组织内部通知邮件
+
+## 📧 邮件结构
+1. **标题**（简洁明了，一眼看出内容）
+2. **称呼**
+3. **正文**（通知内容，重要信息靠前）
+4. **行动要求**（需要收件人做什么，清晰列出）
+5. **联系方式**
+6. **签名**
+
+## ✍️ 语气要求
+- 清晰、准确、不含糊
+- 重要信息加粗或列点"""
+
+    if instruction_type == "complaint_email":
+        return f"""## 🎯 任务
+回复一封客户投诉邮件
+
+## 📧 邮件结构
+1. **称呼**（感谢来信，表明收到）
+2. **确认问题**（复述客户投诉的核心问题）
+3. **道歉**
+4. **调查说明**（我们已采取/正在采取的措施）
+5. **解决方案**（具体补救/赔偿方案）
+6. **预防承诺**
+7. **邀请反馈**
+8. **签名**
+
+## ✍️ 语气要求
+- 真诚倾听，不防御
+- 不推卸责任
+- 解决方案具体、可操作"""
+
+    if instruction_type == "report_email":
+        return f"""## 🎯 任务
+写一份工作周报/月报
+
+## 📧 周报结构
+1. **标题**（如"[姓名] [日期区间] 周报"）
+2. **本周完成**（列出 3-5 项已完成任务，含结果/产出）
+3. **进行中**（正在推进的任务及当前进度 %）
+4. **下周计划**
+5. **风险/阻塞**（如有）
+6. **数据指标**（如有 KPI）
+
+## ✍️ 风格要求
+- 结果导向（不说"做了什么"，说"做成了什么"）
+- 量化成果
+- 简洁"""
+
+    if instruction_type == "creative_writing":
+        info = _extract_info(stripped)
+        return f"""## 🎯 创作任务
+{stripped}
+
+## 📖 题材与形式
+- 类型：[小说/散文/短篇/科幻/奇幻/悬疑/剧本]
+- 风格：{info['style']}
+- 视角：[第一人称/第三人称/上帝视角]
+
+## 👥 目标读者
+- 受众群体：{info['audience']}
+- 期待体验：读者读完后的情感共鸣或收获
+
+## 🏗️ 结构要求
+- 开头：先声夺人
+- 发展：通过冲突/情节推进故事
+- 结尾：令人回味/出乎意料/留白
+
+## ✍️ 写作风格
+- 语气：{info['tone']}
+- 语言：{info['language']}"""
+
+    if instruction_type == "academic_writing":
+        info = _extract_info(stripped)
+        return f"""## 🎯 学术写作任务
+{stripped}
+
+## 📄 文章类型
+- 类型：[文献综述/研究摘要/会议论文/期刊文章]
+- 学术领域：[如 计算机科学/医学/经济学]
+
+## 📋 摘要结构
+1. **背景**（该领域现状和研究空白）
+2. **目的/研究问题**
+3. **方法**（数据集/模型/实验/分析）
+4. **主要发现**（量化优先）
+5. **结论**（意义、局限性、未来方向）
+
+## ✍️ 写作规范
+- 语言：{info['language']}
+- 语气：学术严谨、客观"""
+
+    if instruction_type == "writing":
+        info = _extract_info(stripped)
+        return f"""## 🎯 写作任务
+{stripped}
+
+## 👥 受众
+- 目标读者：{info['audience']}
+- 读者关心什么：{info['topic']} 的核心价值和应用
+
+## 🎯 核心信息
+- 主要观点：围绕 {info['topic']} 展开
+- 期望行动：让读者了解并能实际应用
+
+## 🎨 风格要求
+- 语气：{info['tone']}
+- 语言：{info['language']}
+- 篇幅：800-1500 字
+
+## 🏗️ 结构
+- 开头：先用问题或现象引入
+- 主体：围绕核心要点展开
+- 结尾：总结要点，行动引导"""
+
+    if instruction_type == "explanation":
+        info = _extract_info(stripped)
         core_concept = _extract_core_concept(stripped)
-        if lang == "zh":
-            template_b = f"""## 🎯 解释任务
+        return f"""## 🎯 解释任务
 {stripped}
 
 ## 👤 受众画像
-- 年龄/职业：[目标读者]
+- 年龄/职业：{info['audience']}
 - 技术背景：一般读者，对 {core_concept} 有基本了解
-- 关心什么：[最想了解什么]
+- 关心什么：{core_concept} 是什么、如何工作、有什么应用场景
 
 ## 🔬 解释深度
-- 层次：[扫盲科普/中等理解/深入专业]
+- 层次：{info['depth']}
 - 核心概念：{core_concept} 的定义、原理、应用场景
 
 ## 🧩 讲解策略
-- 类比场景：[用生活中的什么来类比]
-- 讲解顺序：[从已知到未知]
+- 类比场景：{info['analogy']}
+- 讲解顺序：从已知到未知，逐步深入
 
 ## ✅ 检验理解
-- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
-- 常见误解：[提前澄清 1 个误区]"""
-        else:
-            template_b = f"""## 🎯 任务
-Explain: {stripped}
+- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？"""
 
-## 👤 Audience
-- Background: [target reader]
-- Prior knowledge: [their level]
-- Concerns: [what they want to know]
-
-## 🔬 Depth
-- Level: [popular/technical/expert]
-- Core concepts: [1-3 must-understand]
-
-## 🧩 Strategy
-- Analogy: [real-life scenario]
-- Sequence: [known to unknown]
-
-## ✅ Check
-- Question reader can answer after:"""
-    else:
-        template_b = f"""## 🎯 任务
+    return f"""## 🎯 任务
 {stripped}
 
 ## 📋 执行要求
-- 执行者身份：[AI / 专家 / 助手]
+- 执行者：[AI / 专家 / 助手？]
 - 目标：[明确要达到什么]
 - 约束条件：[如有]
 
@@ -1606,10 +1040,156 @@ Explain: {stripped}
 - 什么样的结果算好：[描述标准]
 - 参考案例：[有的话提供]"""
 
+
+# =============================================================================
+# Technique Recommendations
+# =============================================================================
+
+def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[str, str]:
+    """Return (applicable_techniques, examples) for a given instruction type."""
+    recommendations = []
+    examples = []
+
+    if instr_type == "code":
+        recommendations.append("- Chain-of-Thought：先分析最优子结构再写")
+        recommendations.append("- Few-shot：给1-2个输入输出示例")
+        recommendations.append("- Role：扮演资深工程师")
+        if any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort')):
+            examples.append("输入：[3, 1, 2] → 输出：[1, 2, 3]")
+            examples.append("输入：[5, 2, 9, 1] → 输出：[1, 2, 5, 9]")
+        elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
+            examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
+            examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
+        else:
+            examples.append("# 正常用例 → 期望输出")
+            examples.append("# 边界用例 → 期望输出")
+
+    elif instr_type == "explanation":
+        recommendations.append("- Role：扮演耐心的老师")
+        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
+        recommendations.append("- Few-shot：给1个理解过程的示例")
+        examples.append('类比：把"区块链去中心化"比作"村民共同记账"')
+        examples.append("类比：数据库索引就像书的目录")
+
+    elif instr_type == "writing":
+        recommendations.append("- Few-shot：给1篇范文参考")
+        recommendations.append("- Chain-of-Thought：先列提纲再写")
+        recommendations.append("- Role：扮演专业文案撰写者")
+        examples.append('风格参考：开头用"你是否也遇到过..."引发共鸣')
+        examples.append('语气示例：面向程序员用"无需多余配置"')
+
+    elif instr_type in ("rejection_email", "notification_email", "complaint_email",
+                         "apology_email", "report_email"):
+        recommendations.append("- Few-shot：给1封同类邮件参考")
+        recommendations.append("- Role：扮演专业商务沟通顾问")
+        recommendations.append("- Chain-of-Thought：明确目的→组织结构→措辞选择")
+        examples.append("参考结构：称呼→开门见山→核心内容→积极收尾")
+
+    else:
+        recommendations.append("- Zero-shot：直接给出清晰指令")
+        recommendations.append("- Chain-of-Thought：分步骤描述任务")
+        recommendations.append("- Role：明确期望的执行者身份")
+
+    return "\n".join(recommendations), "\n".join(examples)
+
+
+# =============================================================================
+# Main Generator - All LLM-powered with tier selection
+# =============================================================================
+
+def generate_optimized_prompt(instruction: str, tier: str = None) -> str:
+    """
+    Generate optimized prompt using LLM with tier selection.
+    
+    Args:
+        instruction: The user instruction to optimize
+        tier: "auto" (default), "fast", "medium", "deep"
+    
+    Returns:
+        Optimized prompt text
+    """
+    if tier is None or tier == "auto":
+        tier = get_llm_tier(instruction)
+    
+    effective_tier = "fast" if tier == "medium" else tier
+    
+    # Select appropriate prompt template
+    if effective_tier == "fast":
+        prompt_template = FAST_GENERATION_PROMPT
+    else:
+        prompt_template = DEEP_GENERATION_PROMPT
+    
+    # Try LLM generation
+    result = call_llm(
+        prompt_template.format(instruction=instruction),
+        tier=effective_tier
+    )
+    
+    if result:
+        return result
+    
+    # Fallback to template-based generation
+    instr_type = detect_instruction_type(instruction)
+    return generate_fallback_prompt(instruction, instr_type)
+
+
+def generate_optimized_versions(instruction: str, count: int = 3, tier: str = None) -> list[VersionResult]:
+    """
+    Generate optimized prompt versions for the given instruction.
+    All versions use LLM with tier selection.
+    """
+    if tier is None or tier == "auto":
+        tier = get_llm_tier(instruction)
+    
+    analysis = analyze_instruction(instruction, tier=tier)
+    instr_type = analysis["instruction_type"]
+    stripped = instruction.strip()
+
+    applicable_techniques, examples = get_technique_recommendations(instr_type, stripped)
+    versions = []
+
+    # Version A: LLM-generated (primary)
+    generated_a = generate_optimized_prompt(stripped, tier=tier)
+    versions.append({
+        "type": "A (LLM Optimized)",
+        "description": "LLM 生成的优化 prompt",
+        "template": generated_a,
+        "is_direct": False,
+        "applicable_techniques": applicable_techniques,
+        "examples": examples,
+    })
+
+    if count == 1:
+        return versions
+
+    # Version B: More detailed version
+    # Use deep tier for version B if available
+    if tier == "fast":
+        generated_b = generate_optimized_prompt(stripped, tier="medium")
+    else:
+        # Same tier but different angle - add specificity
+        cfg = get_llm_config()
+        api_key = cfg.get("llm_api_key")
+        if api_key:
+            # Ask LLM for a more detailed variant
+            detailed_prompt = f"""用户想要：{stripped}
+
+请生成一个更详细、更具体的优化 prompt 版本，包含：
+- 更精确的约束条件
+- 更明确的输入输出规格
+- 更具体的边界情况处理
+- 性能要求（时间/空间复杂度）
+
+直接输出 prompt 文本。"""
+            result = call_llm(detailed_prompt, tier="deep" if tier == "deep" else "fast")
+            generated_b = result if result else generate_fallback_prompt(stripped, instr_type)
+        else:
+            generated_b = generate_fallback_prompt(stripped, instr_type)
+
     versions.append({
         "type": "B (Detailed)",
         "description": "更详细的 prompt 模板，明确关键要素",
-        "template": template_b,
+        "template": generated_b,
         "is_direct": False,
         "applicable_techniques": applicable_techniques,
         "examples": examples,
@@ -1618,158 +1198,34 @@ Explain: {stripped}
     if count <= 2:
         return versions
 
-    # Version C: Most complete structured prompt
-    if instr_type in EMAIL_TYPES:
-        # Email types: use a more comprehensive version with AI persona
-        template_c = generate_fallback_prompt(stripped, instr_type)
-        template_c = template_c.replace(
-            "## 🎯 任务",
-            "## 🎯 任务\n你是一位专业商务沟通顾问，擅长撰写得体、有效的电子邮件。"
-        )
-        template_c += """
-
-## 💡 高级技巧（Version C 进阶）
-- 邮件主题行：[如何写一个让人想点开的邮件标题]
-- 开头句式：[如何开头让人想读下去]
-- 收尾句式：[如何收尾给读者正面印象]
-- 长度把控：[一般不超过 5 段]"""
-    elif instr_type == "code":
-        defaults = _infer_code_defaults(instruction) or {}
-        lang_default = defaults.get('lang', '[编程语言，如 Python]')
-        is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
-        if is_sorting:
-            template_c = f"""你是一位编程专家。请用 {lang_default} 实现以下功能：
-
-【任务描述】
-{stripped}
-
-【输入规格】
-- 数据类型：整数数组
-- 数据范围：长度 1-100000，元素 0-10^9
-- 格式要求：JSON 数组
-
-【输出规格】
-- 数据类型：整数数组（升序）
-- 格式要求：JSON 数组
-
-【功能要求】
-- 核心逻辑：使用快速排序（原地分区）
-- 边界情况处理：空数组、单元素、重复元素、大数组
-
-【非功能性要求】
-- 时间复杂度：O(n log n)（平均），O(n²)（最坏避免措施：随机主元）
-- 空间复杂度：O(log n)（递归栈）
-- 代码风格：PEP8，类型注解
-
-【测试用例】
-- [] → []
-- [1] → [1]
-- [3, 3, 1, 2, 1] → [1, 1, 2, 3, 3]
-- [10, 9, 8, 7, 6] → [6, 7, 8, 9, 10]"""
-        else:
-            _perf_default = defaults.get('constraints', f'- 时间复杂度：O(n){chr(10)}- 空间复杂度：O(1)')
-            template_c = f"""你是一位编程专家。请用 {lang_default} 实现以下功能：
-
-【任务描述】
-{stripped}
-
-【输入规格】
-- 数据类型：{defaults.get('input', '由调用方提供')}
-- 数据范围：[根据任务推断]
-- 格式要求：[如 JSON/CSV/API]
-
-【输出规格】
-- 数据类型：{defaults.get('output', '根据任务目标确定')}
-- 格式要求：[根据任务推断]
-
-【功能要求】
-- 核心逻辑：[描述核心算法/逻辑]
-- 边界情况处理：{defaults.get('boundary', '空输入、异常值、大规模数据')}
-
-【非功能性要求】
-{_perf_default}
-
-【测试用例】
-- [正常用例]
-- [边界用例]
-- [异常用例]"""
-    elif instr_type == "explanation":
-        # Bug 6 fix: use _extract_core_concept to get clean concept name
-        core_concept = _extract_core_concept(stripped)
-        if lang == "zh":
-            template_c = f"""你是一位擅长用通俗语言解释复杂概念的老师。请解释：
-
-【解释主题】
-{core_concept}
-
-【受众画像】
-- 背景：[年龄、职业、技术敏感度]
-- 已有哪些知识：
-- 关心什么问题：
-
-【解释深度】
-- 层次：[科普扫盲/中等理解/深入分析]
-- 重点概念：{core_concept} 的定义、原理、应用场景
-
-【解释策略】
-- 类比场景：[用生活中的什么来类比]
-- 讲解顺序：[从已知到未知]
-
-【检验理解】
-- 读者读完后能回答：{core_concept} 是什么？有什么应用场景？
-- 常见误解：[提前澄清 1 个误区]
-
-【扩展阅读】
-- 相关概念：[可延伸的 1-2 个相关概念]
-- 推荐资源：[如书籍/视频/文章]"""
-        else:
-            template_c = f"""You are a teacher skilled at explaining complex concepts simply. Explain:
-
-【Topic】
-{core_concept}
-
-【Audience Profile】
-- Background: [age, profession, tech savviness]
-- Prior knowledge:
-- Concerns:
-
-【Depth】
-- Level: [popular/technical/in-depth]
-- Core concepts: {core_concept}
-
-【Strategy】
-- Analogy: [real-life scenario]
-- Sequence: [known to unknown]
-
-【Check Understanding】
-- Key question reader can answer after:"""
-    elif instr_type in ("creative_writing", "academic_writing"):
-        # Use fallback template with advanced coaching
-        template_c = generate_fallback_prompt(stripped, instr_type)
-        template_c += """
-
-## 💡 高级技巧（Version C 进阶）
-- 开头句式：[如何第一句话就抓住读者/审稿人]
-- 节奏把控：[段落长度、节奏变化]
-- 细节密度：[用多少具体例子/数据支撑]
-- 修改建议：[写完后如何自我检审]"""
+    # Version C: Most complete
+    # Use deep tier for version C
+    if tier in ("fast", "medium"):
+        generated_c = generate_optimized_prompt(stripped, tier="deep")
     else:
-        template_c = f"""## 🎯 任务
-{stripped}
+        # Ask for most comprehensive version
+        cfg = get_llm_config()
+        api_key = cfg.get("llm_api_key")
+        if api_key:
+            comprehensive_prompt = f"""用户想要：{stripped}
 
-## 📋 执行要求
-- 执行者身份：[AI / 专家 / 助手]
-- 目标：[明确要达到什么]
-- 约束条件：[如有]
+请生成一个最完整的优化 prompt，包含：
+- 完整的任务描述
+- 所有可能的约束条件
+- 边界情况和异常处理
+- 质量标准和验收条件
+- 相关的最佳实践建议
 
-## ✅ 质量标准
-- 什么样的结果算好：[描述标准]
-- 参考案例：[有的话提供]"""
+直接输出 prompt 文本。"""
+            result = call_llm(comprehensive_prompt, tier="deep")
+            generated_c = result if result else generate_fallback_prompt(stripped, instr_type)
+        else:
+            generated_c = generate_fallback_prompt(stripped, instr_type)
 
     versions.append({
         "type": "C (Complete)",
-        "description": "最完整的 prompt 模板，覆盖所有关键维度",
-        "template": template_c,
+        "description": "最完整的 prompt，覆盖所有关键维度",
+        "template": generated_c,
         "is_direct": False,
         "applicable_techniques": applicable_techniques,
         "examples": examples,
@@ -1777,21 +1233,13 @@ Explain: {stripped}
 
     return versions[:count]
 
+
 # =============================================================================
 # Evaluation (Simplified)
 # =============================================================================
 
 def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> EvaluationResult:
-    """
-    Content-based evaluation that actually differentiates quality.
-
-    Scoring rules:
-    - Has real content (not blank placeholder) → +2/section
-    - Constraints are specific & quantified → +2/section
-    - Language/framework is explicit → +1/section
-    - Blank placeholder → -1/placeholder
-    - Has optional/follow-up prompts → +0.5 (engagement signal)
-    """
+    """Content-based evaluation that differentiates quality."""
     template = version["template"]
     instr_type = analysis["instruction_type"]
 
@@ -1799,15 +1247,10 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
     specificity_score = 5
     completeness_score = 5
 
-    # ---- Blank placeholder penalty ----
-    placeholder_count = template.count("：") + template.count(":")
-    # Only penalize truly blank/uninformative placeholders, not bracket-style template fields
-    # "[姓名]" is an intentional template field, NOT a blank placeholder
     truly_blank_phrases = [
         "[请补充]", "[描述]", "[填写]", "[如 有]", "[可选]",
         "[你决定]", "[未知]", "[自定义]", "______",
-        "[数据类型、格式、范围]",
-        "[数据类型]", "[格式]", "[范围]",
+        "[数据类型、格式、范围]", "[数据类型]", "[格式]", "[范围]",
     ]
     for phrase in truly_blank_phrases:
         if phrase in template:
@@ -1815,29 +1258,19 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
             specificity_score -= blank_penalty
             completeness_score -= blank_penalty
 
-    # ---- Content presence bonus ----
-    # For code tasks: check for real input/output/constraint specs
     if instr_type == "code":
-        # Has non-generic input spec
         if _has_real_content(template, ["输入", "input", "参数"]):
             specificity_score += 2
             completeness_score += 1
-        # Has non-generic output spec
         if _has_real_content(template, ["输出", "output", "返回"]):
             specificity_score += 1
             completeness_score += 1
-        # Has quantified constraints (O(n), 复杂度, 范围)
         if _has_quantified_constraint(template):
             specificity_score += 2
-        # Has explicit language
         if _has_explicit_language(template, ["python", "javascript", "java", "go", "rust", "sql"]):
             specificity_score += 1
-        # Has boundary handling
         if _has_real_content(template, ["边界", "edge", "空输入", "异常"]):
             completeness_score += 1
-        # Has optional follow-up prompts
-        if "【可选" in template or "【可选补充" in template or "optional" in template.lower():
-            completeness_score += 0.5
 
     elif instr_type == "writing":
         if _has_real_content(template, ["受众", "读者", "audience"]):
@@ -1846,49 +1279,35 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
         if _has_real_content(template, ["写作目的", "核心", "key point"]):
             specificity_score += 1
             completeness_score += 1
-        if _has_real_content(template, ["语气", "tone", "风格"]):
-            specificity_score += 1
 
     elif instr_type == "explanation":
         if _has_real_content(template, ["受众", "背景", "audience"]):
             specificity_score += 2
             completeness_score += 1
-        if _has_real_content(template, ["解释深度", "depth", "层次"]):
-            specificity_score += 1
         if _has_real_content(template, ["类比", "analogy"]):
             completeness_score += 1
 
-    # ---- Email subtype scoring (rejection, notification, complaint, apology, report) ----
     elif instr_type in ("rejection_email", "notification_email", "complaint_email",
                         "apology_email", "report_email"):
-        # Has complete email structure (称呼, 开场, 正文, ...)
         if _has_real_content(template, ["称呼"]):
             completeness_score += 1
         if _has_real_content(template, ["正文", "正文", "内容"]):
             completeness_score += 1
-        # Has tone/style guidance
-        if _has_real_content(template, ["语气", "tone", "风格", "专业"]):
+        if _has_real_content(template, ["语气", "tone", "风格"]):
             specificity_score += 1
-        # Has reference template or sample
         if _has_real_content(template, ["参考模板", "模板", "示例"]):
             specificity_score += 2
             completeness_score += 1
-        # Has action/close guidance
-        if _has_real_content(template, ["签名", "祝福", "行动", "收尾"]):
-            completeness_score += 1
 
-    # ---- Clamp scores ----
     clarity_score = max(1, min(10, clarity_score))
     specificity_score = max(1, min(10, specificity_score))
     completeness_score = max(1, min(10, completeness_score))
 
-    # ---- Overall score (weighted average) ----
     overall = round(
         clarity_score * 0.25 + specificity_score * 0.40 + completeness_score * 0.35,
         2
     )
 
-    # ---- Grade ----
     if overall >= 8.0:
         grade = "A"
     elif overall >= 6.5:
@@ -1920,11 +1339,9 @@ def _has_real_content(template: str, keywords: list[str]) -> bool:
         idx = template_lower.find(kw.lower())
         if idx == -1:
             continue
-        # Check surrounding 20 chars for generic placeholders
         start = max(0, idx - 5)
         end = min(len(template), idx + 20)
         snippet = template[start:end]
-        # If snippet contains generic placeholder, count as empty
         for ph in generic_phrases:
             if ph in snippet:
                 return False
@@ -1933,20 +1350,20 @@ def _has_real_content(template: str, keywords: list[str]) -> bool:
 
 
 def _has_quantified_constraint(template: str) -> bool:
-    """Check if template has quantified constraints like O(n), ranges, limits."""
+    """Check if template has quantified constraints."""
+    import re
     quantified_patterns = [
-        r"O\([^)]+\)",       # O(n log n), O(n^2)
-        r"\d+\s*-\s*\d+", # 1-100000
-        r"\d+\s*个",        # 100万个
-        r"\d+k",             # 10k, 100k
-        r"\d+M",             # 1M
+        r"O\([^)]+\)",
+        r"\d+\s*-\s*\d+",
+        r"\d+\s*个",
+        r"\d+k",
+        r"\d+M",
         r"时间复杂度",
         r"空间复杂度",
         r"\d+\s*小时",
         r"\d+\s*分钟",
         r"\d+\s*秒",
     ]
-    import re
     for pat in quantified_patterns:
         if re.search(pat, template, re.IGNORECASE):
             return True
@@ -1961,46 +1378,50 @@ def _has_explicit_language(template: str, langs: list[str]) -> bool:
             return True
     return False
 
+
 def recommend_version(evaluations: list[EvaluationResult], analysis: AnalysisResult) -> int:
     """Recommend based on task complexity."""
     complexity = analysis["task_complexity"]
     
     if complexity == "simple":
-        # For simple tasks, prefer direct output
         for i, eval_result in enumerate(evaluations):
             if eval_result["overall"] >= 8.0:
                 return i
     else:
-        # For complex tasks, use framework/template
         for i, eval_result in enumerate(evaluations):
             if eval_result["overall"] >= 6.0:
                 return i
     
     return 0
 
+
 # =============================================================================
-# LLM Generation
+# LLM Generation (legacy, wraps call_llm)
 # =============================================================================
 
 def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4",
                       endpoint: str = "https://api.openai.com/v1/chat/completions",
                       instruction_type: str = None) -> Optional[str]:
     """
-    Use LLM with deep reasoning to generate optimized prompt.
-    Uses the LLM-Enhanced prompts for genuine deep reasoning, not template filling.
+    Legacy LLM generation function.
+    Use generate_optimized_prompt() instead for tier-aware generation.
     """
     if not api_key:
-        return None
+        cfg = get_llm_config()
+        api_key = cfg.get("llm_api_key")
+        model = cfg.get("llm_model", "gpt-4")
+        endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
 
-    # Select the right generation prompt based on instruction type
-    if instruction_type == "code":
-        user_prompt = CODE_GENERATION_PROMPT.format(instruction=instruction)
-    elif instruction_type in ("writing", "creative_writing", "academic_writing"):
-        user_prompt = WRITING_GENERATION_PROMPT.format(instruction=instruction)
-    elif instruction_type == "explanation":
-        user_prompt = EXPLANATION_GENERATION_PROMPT.format(instruction=instruction)
-    else:
-        user_prompt = GENERAL_GENERATION_PROMPT.format(instruction=instruction)
+    system = """你是一个专业的 prompt 工程专家，擅长将模糊的用户需求转化为完整、精确的 prompt。
+你的工作哲学：不要问用户问题，直接推理并填充合理的默认值；宁可多做，不要少做；深度推理比规则匹配好 100 倍。"""
+
+    type_prompts = {
+        "code": f"""你是一个 prompt 工程专家。用户想要：\n\n{instruction}\n\n请深度思考并生成优化后的 prompt。直接输出，不要解释。""",
+        "writing": f"""你是写作专家，擅长生成能产生好内容的写作指令。用户想要：\n\n{instruction}\n\n请生成优化后的写作 prompt。直接输出，不要解释。""",
+        "explanation": f"""你是一位老师，擅长把复杂概念讲得通俗易懂。用户想要理解：\n\n{instruction}\n\n请生成优化后的解释 prompt。直接输出，不要解释。""",
+    }
+    
+    user_prompt = type_prompts.get(instruction_type, f"""用户想要：\n\n{instruction}\n\n请深度思考并生成优化后的 prompt。直接输出，不要解释。""")
 
     try:
         response = requests.post(
@@ -2012,12 +1433,12 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": PROMPT_GENERATION_SYSTEM},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": user_prompt},
                 ],
-                "temperature": 0.8,  # Higher temp for creative reasoning
+                "temperature": 0.8,
             },
-            timeout=60,  # Longer timeout for deep reasoning
+            timeout=60,
         )
         response.raise_for_status()
         result = response.json()
@@ -2027,16 +1448,15 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
 
 
 def optimize_with_llm(instruction: str, instruction_type: str = None) -> OptimizationResult:
-    """Optimize using LLM when API key is configured."""
+    """Optimize using LLM when API key is configured. Legacy function."""
     cfg = get_llm_config()
     api_key = cfg.get("llm_api_key")
     model = cfg.get("llm_model", "gpt-4")
     endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
 
-    analysis = analyze_instruction(instruction)
+    analysis = analyze_instruction(instruction, tier="deep")
     instr_type = instruction_type or analysis["instruction_type"]
 
-    # No API key: fall back to structured template
     if not api_key:
         generated = generate_fallback_prompt(instruction, instr_type)
         version: VersionResult = {
@@ -2044,6 +1464,8 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
             "description": "结构化模板（未配置 API key，使用内置模板）",
             "template": generated,
             "is_direct": False,
+            "applicable_techniques": "",
+            "examples": "",
         }
         evaluation = evaluate_version(version, analysis)
         return {
@@ -2054,10 +1476,10 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
             "recommended_idx": 0,
             "recommended_version": version,
             "recommended_evaluation": evaluation,
+            "llm_tier": "none",
         }
 
     generated = generate_with_llm(instruction, api_key, model, endpoint, instr_type)
-    # LLM call failed: fall back to structured template
     if not generated:
         generated = generate_fallback_prompt(instruction, instr_type)
         version = {
@@ -2065,13 +1487,17 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
             "description": "结构化模板（LLM 调用失败，使用内置模板）",
             "template": generated,
             "is_direct": False,
+            "applicable_techniques": "",
+            "examples": "",
         }
     else:
         version = {
             "type": "LLM Optimized",
-            "description": "LLM 生成的优化 prompt（需配置 API key）",
+            "description": "LLM 生成的优化 prompt",
             "template": generated,
             "is_direct": False,
+            "applicable_techniques": "",
+            "examples": "",
         }
 
     evaluation = evaluate_version(version, analysis)
@@ -2083,6 +1509,7 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
         "recommended_idx": 0,
         "recommended_version": version,
         "recommended_evaluation": evaluation,
+        "llm_tier": "deep",
     }
 
 
@@ -2090,22 +1517,45 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
 # Main Pipeline
 # =============================================================================
 
-def optimize(instruction: str, use_llm: bool = False) -> OptimizationResult:
+def optimize(instruction: str, use_llm: bool = False, tier: str = None) -> OptimizationResult:
     """
-    Main optimization pipeline. Set use_llm=True to prefer LLM generation.
+    Main optimization pipeline. All steps use LLM with tier selection.
     
-    Always outputs "优化后的 prompt 文本" (optimized prompt text),
-    not direct content (code/email/explanation).
+    Args:
+        instruction: The instruction to optimize
+        use_llm: Legacy flag, use tier instead (tier="deep" if True)
+        tier: "auto" (default), "fast", "medium", "deep"
+            - auto: selects tier based on instruction complexity
+            - fast: use fast model (gpt-3.5-turbo)
+            - medium: use fast model with detailed prompt
+            - deep: use deep model (gpt-4) with detailed prompt
+    
+    Returns:
+        OptimizationResult with analysis, versions, evaluations, and recommended version
     """
-    analysis = analyze_instruction(instruction)
+    # Handle legacy use_llm flag
+    if use_llm and tier is None:
+        tier = "deep"
+    
+    # Default to auto tier selection
+    if tier is None:
+        tier = "auto"
+    
+    # Determine effective tier for analysis
+    effective_tier = tier
+    if tier == "auto":
+        effective_tier = get_llm_tier(instruction)
+    
+    analysis = analyze_instruction(instruction, tier=effective_tier)
     instr_type = analysis["instruction_type"]
 
-    if use_llm:
-        # LLM path: generate truly optimized prompt
-        return optimize_with_llm(instruction, instruction_type=instr_type)
-    else:
-        # Fallback path: generate A/B/C structured prompt versions
-        versions = generate_optimized_versions(instruction, count=3)
+    # Check if API key is available
+    cfg = get_llm_config()
+    has_api_key = bool(cfg.get("llm_api_key"))
+    
+    if not has_api_key:
+        # No API key: use fallback templates
+        versions = generate_optimized_versions(instruction, count=3, tier="fast")
         evaluations = [evaluate_version(v, analysis) for v in versions]
         recommended_idx = recommend_version(evaluations, analysis)
         return {
@@ -2116,7 +1566,25 @@ def optimize(instruction: str, use_llm: bool = False) -> OptimizationResult:
             "recommended_idx": recommended_idx,
             "recommended_version": versions[recommended_idx],
             "recommended_evaluation": evaluations[recommended_idx],
+            "llm_tier": "none",
         }
+
+    # Has API key: generate versions using LLM with tier selection
+    versions = generate_optimized_versions(instruction, count=3, tier=tier)
+    evaluations = [evaluate_version(v, analysis) for v in versions]
+    recommended_idx = recommend_version(evaluations, analysis)
+    
+    return {
+        "original": instruction,
+        "analysis": analysis,
+        "versions": versions,
+        "evaluations": evaluations,
+        "recommended_idx": recommended_idx,
+        "recommended_version": versions[recommended_idx],
+        "recommended_evaluation": evaluations[recommended_idx],
+        "llm_tier": effective_tier,
+    }
+
 
 # =============================================================================
 # Feedback & Learning

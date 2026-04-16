@@ -2,7 +2,7 @@
 
 **让 AI 工具的输出从"模板"变成"专业工具"**
 
-> 无需 API Key · 开箱即用 · 中英双语
+> 所有环节都是 LLM 驱动 · 无需 API Key 也能用 · 中英双语
 
 [![GitHub stars](https://img.shields.io/github/stars/cancaries/prompt-autopilot?style=flat-square)](https://github.com/cancaries/prompt-autopilot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
@@ -10,43 +10,6 @@
 ---
 
 ## ⚡ 先看效果
-
-```
-$ pma "做个登录功能"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 双视角分析 · 登录功能
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📝 原始指令：帮我做个登录功能
-
-⚡ 置信度评估
-综合置信度：62%
-🔧 工程师：70%  ████████░░
-🎯 产品：55%    ██████░░░░
-⚠️ 有 3 个缺口需要确认
-
-🔧 工程师视角发现
-━━━━━━━━━━━━━━━━━━━━
-✅ 理解：用户认证系统
-❌ 认证方式未指定（JWT/Session/OAuth？）
-❌ 数据存储未指定（MySQL/PostgreSQL？）
-❌ 错误处理未考虑
-
-💡 建议：用 JWT + bcrypt + PostgreSQL
-
-🎯 产品视角发现
-━━━━━━━━━━━━━━━━━━━━
-✅ 理解：用户需要登录能力
-❌ 可能需要注册功能
-❌ 可能需要第三方登录（微信/Google）
-❌ 可能需要密码找回
-
-💡 确认：只登录？还是要注册？
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-**优化输出：**
 
 ```
 $ pma "帮我写排序算法"
@@ -97,9 +60,45 @@ pip install -e .
 
 ---
 
+## 🧠 LLM 分层系统
+
+**所有环节都是 LLM 驱动。** 区别只是模型选择：
+
+| 层级 | 模型 | 响应时间 | 适用场景 |
+|------|------|---------|---------|
+| ⚡ **fast** | gpt-3.5-turbo | 1-2秒 | 简单指令（< 10 词） |
+| ⚡ **medium** | gpt-3.5 + 详细prompt | 2-3秒 | 中等指令 |
+| 🧠 **deep** | gpt-4 | 5-10秒 | 复杂指令（>= 30 词） |
+
+### CLI 用法
+
+```bash
+# 自动选择层级（默认）
+pma optimize "做个登录"
+
+# 强制快速 LLM（gpt-3.5，~1-2秒）
+pma optimize "做个登录" --fast
+
+# 强制深度 LLM（gpt-4，~5-10秒）
+pma optimize "做个登录" --deep
+
+# 显式指定层级
+pma optimize "做个登录" --tier auto|fast|medium|deep
+```
+
+### 自动选择规则
+
+```python
+# < 10 词 → fast
+# < 30 词 → medium
+# >= 30 词 → deep
+```
+
+---
+
 ## 🎯 核心功能
 
-### 1. `think` — 双视角深度分析（核心亮点）
+### 1. `think` — 双视角深度分析
 
 ```bash
 pma think "做个登录功能"
@@ -112,14 +111,14 @@ pma think "做个登录功能"
 | 🔧 工程师视角 | 技术完整性、语言/框架/数据库/错误处理 |
 | 🎯 产品视角 | 用户真正需要什么、可能遗漏的需求 |
 
-### 2. `optimize` — 智能推断 + 专业输出
+### 2. `optimize` — LLM 优化 + 专业输出
 
 ```bash
 pma optimize "帮我写排序算法"
 pma optimize "写一封给投资人的邮件"
 ```
 
-**内置智能推断引擎**，常见任务（排序/登录/API/缓存...）自动补充默认值，不再输出空白占位符。
+**所有环节都是 LLM 驱动**，结合智能推断引擎，常见任务自动补充默认值，不再输出空白占位符。
 
 ### 3. `analyze` — 快速分析
 
@@ -158,14 +157,32 @@ pma analyze "解释一下区块链"
 
 ## 🔧 高级用法
 
-### 配置 API Key（可选，使用 LLM 生成）
+### 配置 API Key（可选，启用 LLM 生成）
 
 ```bash
 # 设置 OpenAI API Key
 pma config --api-key sk-xxx --model gpt-4
 
-# 使用 LLM 优化（需要 API Key）
-pma optimize "帮我写个功能" --use-llm
+# 强制使用深度 LLM（gpt-4）
+pma optimize "帮我写个功能" --deep
+
+# 自动选择（默认）
+pma optimize "帮我写个功能"
+```
+
+**不配置 API Key**：使用内置智能模板
+**配置 API Key**：所有环节使用 LLM，自动选择层级
+
+### 配置文件
+
+```json
+// ~/.prompt-autopilot/config.json
+{
+  "llm_api_key": "sk-...",
+  "fast_model": "gpt-3.5-turbo",
+  "deep_model": "gpt-4",
+  "llm_endpoint": "https://api.openai.com/v1/chat/completions"
+}
 ```
 
 ### 交互模式
@@ -212,7 +229,7 @@ pma feedback -i "帮我写排序" -c B --feedback "A太简单，C太复杂"
 ```
 prompt-autopilot/
 ├── src/prompt_autopilot/
-│   ├── core.py              # 核心逻辑 + 智能推断引擎
+│   ├── core.py              # 核心逻辑 + LLM 分层系统
 │   ├── display.py           # 格式化输出
 │   ├── dual_perspective.py   # 双视角分析系统
 │   └── cli.py               # 命令行入口

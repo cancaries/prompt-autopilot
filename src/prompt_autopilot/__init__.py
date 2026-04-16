@@ -7,6 +7,7 @@ __version__ = "1.0.0"
 from .core import (
     analyze_instruction,
     generate_optimized_versions,
+    generate_optimized_prompt,
     evaluate_version,
     optimize,
     optimize_with_llm,
@@ -18,6 +19,9 @@ from .core import (
     save_template,
     list_templates,
     search_templates,
+    get_llm_tier,
+    get_llm_config,
+    LLM_TIERS,
 )
 from .library import (
     save_prompt,
@@ -34,6 +38,7 @@ from .display import display_result, DisplayStyle
 __all__ = [
     "analyze_instruction",
     "generate_optimized_versions",
+    "generate_optimized_prompt",
     "evaluate_version",
     "optimize",
     "optimize_with_llm",
@@ -55,4 +60,7 @@ __all__ = [
     "update_prompt",
     "display_result",
     "DisplayStyle",
+    "get_llm_tier",
+    "get_llm_config",
+    "LLM_TIERS",
 ]
