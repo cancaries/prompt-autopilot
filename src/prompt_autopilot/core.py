@@ -318,422 +318,61 @@ def analyze_instruction(instruction: str) -> AnalysisResult:
 # Output Generation - Direct when possible
 # =============================================================================
 
-def generate_direct_code(instruction: str, lang: str) -> str:
-    """Generate actual usable code for simple coding tasks."""
-    instruction_lower = instruction.lower()
-    
-    # Sorting - most specific first
-    has_sort = any(w in instruction_lower for w in ["排序", "sort", "快排", "quicksort", "mergesort"])
-    
-    if has_sort:
-        if "快" in instruction or "quick" in instruction_lower:
-            if lang == "zh":
-                return """```python
-# 快速排序
-def quicksort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x < pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x > pivot]
-    return quicksort(left) + middle + quicksort(right)
+# DEPRECATED: These functions generated content directly instead of optimized prompts.
+# Use generate_fallback_prompt() or generate_with_llm() instead.
+# (generate_direct_code, generate_direct_explanation, generate_direct_writing removed)
+
+
+# =============================================================================
+# Fallback: Structured Prompt Templates (no LLM required)
+# =============================================================================
+
+def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
+    """不用 LLM 时，生成结构化的 prompt 文本模板。"""
+    if instruction_type == "code":
+        return f"""优化后的编程指令：
+
+【任务】
+{instruction}
+
+【要求补充】
+- 编程语言/框架：
+- 输入规格：
+- 输出规格：
+- 约束条件：
+- 性能要求（如有）："""
+    elif instruction_type == "writing":
+        return f"""优化后的写作指令：
+
+【任务】
+{instruction}
+
+【要求补充】
+- 受众是谁：
+- 写作目的：
+- 语气风格：
+- 核心要点："""
+    elif instruction_type == "explanation":
+        return f"""优化后的解释指令：
+
+【任务】
+{instruction}
+
+【要求补充】
+- 受众背景：
+- 解释深度：
+- 核心概念：
+- 类比场景："""
+    else:
+        return f"""优化后的指令：
+
+{instruction}
+
+【补充背景】
+- 执行者：
+- 目标：
+- 约束："""
 
-nums = [3, 6, 8, 10, 1, 2, 1]
-print(quicksort(nums))
-```
-
-要点：平均O(n log n)，最坏O(n^2)"""
-        if "merge" in instruction_lower or "归并" in instruction:
-            if lang == "zh":
-                return """```python
-# 归并排序
-def mergesort(arr):
-    if len(arr) <= 1:
-        return arr
-    mid = len(arr) // 2
-    return merge(mergesort(arr[:mid]), mergesort(arr[mid:]))
-
-def merge(left, right):
-    result = []
-    while left and right:
-        result.append(left.pop(0) if left[0] <= right[0] else right.pop(0))
-    return result + left + right
-
-nums = [3, 6, 8, 10, 1, 2, 1]
-print(mergesort(nums))
-```
-
-要点：稳定排序，总是O(n log n)"""
-        if lang == "zh":
-            return """```python
-# 排序函数
-def sort_arr(arr, method="quick"):
-    if method == "quick":
-        return quicksort(arr)
-    elif method == "merge":
-        return mergesort(arr)
-    return sorted(arr)
-
-def quicksort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr) // 2]
-    return quicksort([x for x in arr if x < pivot]) + quicksort([x for x in arr if x == pivot]) + quicksort([x for x in arr if x > pivot])
-```
-
-支持: 快排/归并/内置"""
-    
-    # Login
-    if any(w in instruction_lower for w in ["登录", "login", "登陆"]):
-        if lang == "zh":
-            return """```python
-def login(username, password):
-    user = db.query("SELECT * FROM users WHERE username = ?", username)
-    if not user:
-        return {"success": False, "message": "用户不存在"}
-    if not verify_password(password, user["password_hash"]):
-        return {"success": False, "message": "密码错误"}
-    return {"success": True, "user": {"id": user["id"], "username": user["username"]}}
-```
-
-要点：密码哈希、参数化查询、模糊错误信息"""
-    
-    # API
-    if any(w in instruction_lower for w in ["api", "接口"]):
-        if lang == "zh":
-            return """```python
-from flask import Flask, request, jsonify
-app = Flask(__name__)
-
-@app.route("/api/resource", methods=["GET"])
-def get_resource():
-    page = request.args.get("page", 1, type=int)
-    limit = request.args.get("limit", 20, type=int)
-    resources = db.query("SELECT * FROM resources LIMIT ? OFFSET ?", (page-1)*limit, limit)
-    return jsonify({"data": resources})
-```"""
-    
-    # Generic
-    if lang == "zh":
-        topic = instruction.replace("帮我", "").replace("写", "").replace("一个", "").strip()
-        # Use generic function name for Chinese topics (cannot derive valid Python identifier)
-        func_name = 'solution'
-        return f"""```python
-# {topic}
-def {func_name}():
-    pass
-```
-提示: 较简单，请补充细节"""
-    return f"""```python
-# {instruction}
-def solution():
-    pass
-```"""
-    
-    # API endpoint
-    if any(w in instruction_lower for w in ["api", "接口", "endpoint"]):
-        if lang == "zh":
-            return '''```python
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
-
-@.app.route("/api/resource", methods=["GET"])
-def get_resource():
-    """获取资源列表"""
-    page = request.args.get("page", 1, type=int)
-    limit = request.args.get("limit", 20, type=int)
-    
-    resources = db.query(
-        "SELECT * FROM resources LIMIT ? OFFSET ?",
-        (page - 1) * limit, limit
-    )
-    total = db.query("SELECT COUNT(*) FROM resources")[0][0]
-    
-    return jsonify({
-        "data": resources,
-        "pagination": {"page": page, "limit": limit, "total": total}
-    })
-
-@.app.route("/api/resource", methods=["POST"])
-def create_resource():
-    """创建资源"""
-    data = request.get_json()
-    # 验证必要字段
-    if not data.get("name"):
-        return jsonify({"error": "name is required"}), 400
-    
-    resource_id = db.insert("INSERT INTO resources (name, data) VALUES (?, ?)",
-                            data["name"], json.dumps(data))
-    return jsonify({"id": resource_id, **data}), 201
-```'''
-    
-    # Sorting algorithms
-    if any(w in instruction_lower for w in ["排序", "sort", "快排", "quicksort", "mergesort"]):
-        if "快" in instruction or "quick" in instruction_lower:
-            if lang == "zh":
-                return """```python
-# 快速排序
-def quicksort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x < pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x > pivot]
-    return quicksort(left) + middle + quicksort(right)
-
-nums = [3, 6, 8, 10, 1, 2, 1]
-print(quicksort(nums))  # [1, 1, 2, 3, 6, 8, 10]
-```
-
-**要点**：
-- 平均 O(n log n)，最坏 O(n²)
-- 选择中间元素作基准可减少最坏情况"""
-        if "merge" in instruction_lower or "归并" in instruction:
-            if lang == "zh":
-                return """```python
-# 归并排序
-def mergesort(arr):
-    if len(arr) <= 1:
-        return arr
-    mid = len(arr) // 2
-    return merge(mergesort(arr[:mid]), mergesort(arr[mid:]))
-
-def merge(left, right):
-    result = []
-    while left and right:
-        result.append(left.pop(0) if left[0] <= right[0] else right.pop(0))
-    return result + left + right
-
-nums = [3, 6, 8, 10, 1, 2, 1]
-print(mergesort(nums))  # [1, 1, 2, 3, 6, 8, 10]
-```
-
-**要点**：
-- 稳定排序，总是 O(n log n)
-- 需要 O(n) 额外空间"""
-        if lang == "zh":
-            return """```python
-# 排序函数
-def sort_arr(arr, method="quick"):
-    if method == "quick":
-        return quicksort(arr)
-    elif method == "merge":
-        return mergesort(arr)
-    return sorted(arr)
-
-def quicksort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr) // 2]
-    return quicksort([x for x in arr if x < pivot]) + \
-           [x for x in arr if x == pivot] + \
-           quicksort([x for x in arr if x > pivot])
-```
-
-**支持**: 快排(quick)、归并(merge)、内置排序(sorted)"""
-
-    # Generic code request
-    if lang == "zh":
-        topic = instruction.replace("帮我", "").replace("写", "").replace("一个", "").strip()
-        # Use generic function name for Chinese topics (cannot derive valid Python identifier)
-        func_name = 'solution'
-        return f"""```python
-# {topic}
-def {func_name}():
-    pass
-```
-
-**提示**: 指令较简单，如需特定实现请补充更多细节"""
-    return f"""```python
-# {instruction}
-def solution():
-    pass
-```"""
-
-def generate_direct_explanation(instruction: str, lang: str) -> str:
-    """Generate direct explanations without templates."""
-    instruction_lower = instruction.lower()
-    
-    # AI/ML concepts
-    if any(w in instruction_lower for w in ["ai", "人工智能", "机器学习", "ml"]):
-        if lang == "zh":
-            return '''## AI（人工智能）是什么？
-
-**简单说**：让计算机具有像人一样的智能，能学习、推理、做决策。
-
-**三种类型**：
-1. **弱AI**：专精单一任务（如棋类AI、语音助手）
-2. **强AI**：通用智能，能像人一样思考（还未实现）
-3. **超AI**：超越人类智能（科幻领域）
-
-**核心原理**：
-- **机器学习**：从数据中学习规律
-- **深度学习**：用神经网络模拟人脑
-- **大模型**：海量数据训练的超级大脑
-
-**实际应用**：人脸识别、推荐系统、自动驾驶、医疗诊断'''
-
-    if "api" in instruction_lower and lang == "zh":
-        return '''## API 是什么？
-
-**API = Application Programming Interface（应用程序接口）**
-
-**简单比喻**：就像餐厅的菜单。厨房（系统）提供什么菜（功能），你（程序）只需要按菜单点菜（调用API），不用知道厨房怎么做的。
-
-**实际例子**：
-```
-用户点外卖 → APP调用外卖平台API → 外卖平台派单 → 骑手取餐 → 送达
-```
-
-**网页API示例**：
-```javascript
-// 调用天气API
-fetch("https://api.weather.com/today?city=北京")
-  .then(r => r.json())
-  .then(data => console.log(data))
-```
-
-**API让开发变简单**：不用自己造轮子，直接用别人的服务。'''
-
-    # Generic explanation
-    topic = instruction.replace("解释", "").replace("说明", "").replace("什么是", "").replace("介绍", "").strip()
-    if lang == "zh":
-        return f'''## {topic}是什么？
-
-**一句话解释**：
-{topic}是一种[你的理解/定义]
-
-**核心要点**：
-1. **是什么**：{topic}的精确定义
-2. **为什么重要**：解决了什么问题
-3. **怎么工作**：基本原理或机制
-
-**常见用途**：
-- 场景1
-- 场景2
-
-**需要注意**：
-- 优点：...
-- 局限：..'''
-    return f'''## {topic}
-
-**Definition**:
-[Your definition here]
-
-**Key Points**:
-1. What it is
-2. Why it matters
-3. How it works'''
-
-def generate_direct_writing(instruction: str, lang: str) -> str:
-    """Generate usable writing templates/content."""
-    instruction_lower = instruction.lower()
-    
-    # Email templates - check rejection BEFORE generic email/apology
-    if any(w in instruction_lower for w in ["拒绝", "谢绝", "declin"]):
-        if lang == "zh":
-            return '''## 拒绝邮件模板
-
-**Subject**: 关于[面试/职位/邀请]的回复
-
-亲爱的[收件人]：
-
-您好。
-
-非常感谢您发来的[面试邀请/职位机会/邀请]。
-
-经过慎重考虑，我决定[接受/拒绝]本次[面试/邀请]。
-
-[如拒绝，说明原因，如：因个人时间安排冲突/已接受其他机会等]
-
-再次感谢您的理解与支持，祝贵司[业务蒸蒸日上/招聘顺利]。
-
-此致
-[你的名字]
-[日期]'''
-    
-    if any(w in instruction_lower for w in ["邮件", "email", "道歉"]):
-        if lang == "zh":
-            return '''## 道歉邮件模板
-
-**Subject**: 关于[事件]的致歉
-
-亲爱的[收件人]：
-
-您好。
-
-写这封邮件是想就[具体事件]向您表达诚挚的歉意。
-
-[说明发生了什么，以及为什么会发生]
-
-我们已经采取了以下措施防止类似问题再次发生：
-- 措施1
-- 措施2
-
-再次为给您带来的不便深表歉意。
-
-此致
-[你的名字]
-[日期]'''
-
-    if any(w in instruction_lower for w in ["汇报", "报告", "项目"]):
-        if lang == "zh":
-            return '''## 项目进展汇报
-
-**项目名称**：[名称]
-**汇报日期**：[日期]
-**负责人**：[姓名]
-
-### 一、本周进展
-- [已完成任务1]
-- [已完成任务2]
-
-### 二、关键指标
-| 指标 | 目标 | 实际 | 状态 |
-|------|------|------|------|
-| 进度 | 50% | 45% | ⚠️ 滞后5% |
-
-### 三、问题与风险
-- 问题1：[描述] → 解决方案
-- 风险：[描述] → 应对措施
-
-### 四、下周计划
-- [计划任务1]
-- [计划任务2]
-
-### 五、资源需求
-- [需要什么支持]'''
-
-    # Generic writing
-    if lang == "zh":
-        return f'''## 关于"{instruction}"的内容框架
-
-### 引言
-[开场白，引出主题]
-
-### 主体
-#### 要点1
-[内容]
-
-#### 要点2
-[内容]
-
-### 结语
-[总结]'''
-    return f'''## Content for: {instruction}
-
-### Introduction
-[Opening]
-
-### Main Points
-- Point 1
-- Point 2
-
-### Conclusion
-[Summary]'''
 
 # =============================================================================
 # Main Generator
@@ -741,189 +380,269 @@ def generate_direct_writing(instruction: str, lang: str) -> str:
 
 def generate_optimized_versions(instruction: str, count: int = 3) -> list[VersionResult]:
     """
-    Generate outputs based on task complexity.
-    Simple = direct output
-    Medium = framework with guidance
-    Complex = structured template
+    Generate optimized prompt versions for the given instruction.
+    All versions output structured prompt TEXT (not direct content).
     """
     analysis = analyze_instruction(instruction)
-    complexity = analysis["task_complexity"]
     instr_type = analysis["instruction_type"]
     lang = analysis["language"]
     stripped = instruction.strip()
-    
+
     versions = []
-    
-    # Version A: Direct (best for simple tasks)
-    if complexity == "simple":
-        if instr_type == "code":
-            direct_output = generate_direct_code(instruction, lang)
-        elif instr_type == "explanation":
-            direct_output = generate_direct_explanation(instruction, lang)
-        elif instr_type == "writing":
-            direct_output = generate_direct_writing(instruction, lang)
-        else:
-            direct_output = f"**直接回答**：{stripped}\n\n[请补充具体内容或细节]"
-        
-        versions.append({
-            "type": "A (Direct)",
-            "description": "直接给出可用结果，不用填写任何内容",
-            "template": direct_output,
-            "is_direct": True,
-        })
-        
-    # Version B: Framework (for medium tasks)
+
+    # Version A: Structured template (baseline)
+    template_a = generate_fallback_prompt(stripped, instr_type)
+    versions.append({
+        "type": "A (Template)",
+        "description": "结构化 prompt 模板，引导补充关键信息",
+        "template": template_a,
+        "is_direct": False,
+    })
+
+    # Version B: More detailed structured prompt
     if instr_type == "code":
         if lang == "zh":
-            framework = f'''## {stripped}
+            template_b = f"""用 Python 实现以下编程任务：
 
-**推荐实现**：
-```python
-# 实现代码框架
-def solution():
-    # 核心逻辑
-    pass
-```
+{stripped}
 
-**关键考虑**：
-- 输入输出明确
-- 错误处理
-- 性能优化（如需要）
-
-**扩展方向**：
-- 添加缓存
-- 并发支持'''
+具体要求：
+- 输入：[描述输入格式，如 整数数组]
+- 输出：[描述输出格式，如 排序后的整数数组]
+- 边界情况：[如 空数组、重复元素、大规模数据]
+- 性能要求：[如有，如 时间复杂度 O(n log n)]"""
         else:
-            framework = f'''## {stripped}
+            template_b = f"""Implement the following task:
 
-```python
-def solution():
-    # Core logic
-    pass
-```
+{stripped}
 
-**Key Considerations**:
-- Input/output validation
-- Error handling'''
-        versions.append({
-            "type": "B (Framework)",
-            "description": "给出代码框架和关键考虑，需要微调",
-            "template": framework,
-            "is_direct": False,
-        })
-    
+Requirements:
+- Input: [describe input format]
+- Output: [describe output format]
+- Edge cases: [describe]
+- Performance: [if applicable]"""
     elif instr_type == "writing":
-        content = generate_direct_writing(instruction, lang)
-        versions.append({
-            "type": "B (Content)",
-            "description": "给出实际内容框架，可直接使用",
-            "template": content,
-            "is_direct": True,
-        })
-    
+        if lang == "zh":
+            template_b = f"""请写一篇关于以下主题的文章：
+
+{stripped}
+
+写作要求：
+- 受众：[描述目标读者]
+- 语气：[正式/亲切/专业/轻松]
+- 核心信息：[列出 2-3 个必须传达的要点]
+- 字数：[如有限制]"""
+        else:
+            template_b = f"""Write about the following topic:
+
+{stripped}
+
+Requirements:
+- Audience: [describe]
+- Tone: [formal/casual/professional]
+- Key points: [list 2-3]
+- Length: [if specified]"""
     elif instr_type == "explanation":
-        content = generate_direct_explanation(instruction, lang)
-        versions.append({
-            "type": "B (Explanation)",
-            "description": "给出完整解释，可直接阅读",
-            "template": content,
-            "is_direct": True,
-        })
-    
-    # Version C: Structured Template (for complex tasks)
+        if lang == "zh":
+            template_b = f"""向以下受众解释：
+
+{stripped}
+
+要求：
+- 受众背景：[年龄、技术背景、认知水平]
+- 解释深度：[科普/中等/专业]
+- 核心概念：[1-3 个必须讲清楚的概念]
+- 类比场景：[用生活中的什么来类比]"""
+        else:
+            template_b = f"""Explain the following to your audience:
+
+{stripped}
+
+Requirements:
+- Audience background: [describe]
+- Depth: [popular/technical/expert]
+- Core concepts: [1-3 must-understand concepts]
+- Analogy: [real-life scenario to use]"""
+    else:
+        template_b = f"""请帮我完成以下任务：
+
+{stripped}
+
+具体要求：
+- 执行者身份：[AI/专家/助手]
+- 目标：[明确要达到什么]
+- 约束条件：[如有]"""
+
+    versions.append({
+        "type": "B (Detailed)",
+        "description": "更详细的 prompt 模板，明确关键要素",
+        "template": template_b,
+        "is_direct": False,
+    })
+
+    # Version C: Most complete structured prompt
     if instr_type == "code":
         if lang == "zh":
-            template = f'''## 任务
+            template_c = f"""你是一位编程专家。请用 [编程语言] 实现以下功能：
+
+【任务描述】
 {stripped}
 
-## 输入规范
-[具体输入格式]
+【输入规格】
+- 数据类型：[如 整数、字符串、数组]
+- 数据范围：[如 0-10000]
+- 格式要求：[如 JSON/CSV]
 
-## 输出规范
-[具体输出格式]
+【输出规格】
+- 数据类型：
+- 格式要求：
 
-## 约束条件
-- [性能要求]
-- [安全要求]
-- [其他]
+【功能要求】
+- 核心逻辑：
+- 边界情况处理：[空输入、异常值、大规模数据]
 
-## 实现步骤
-1. [步骤1]
-2. [步骤2]
-3. [步骤3]
-
-## 验收标准
-- [可测试的标准]'''
+【非功能性要求】
+- 时间复杂度：
+- 空间复杂度：
+- 代码风格：[如 PEP8]"""
         else:
-            template = f'''## Task
+            template_c = f"""You are a programming expert. Implement the following in [language]:
+
+【Task】
 {stripped}
 
-## Input
-[Spec]
+【Input Spec】
+- Data type:
+- Range:
+- Format:
 
-## Output
-[Spec]
+【Output Spec】
+- Data type:
+- Format:
 
-## Constraints
-- [Performance]
-- [Security]
+【Requirements】
+- Core logic:
+- Edge cases:
 
-## Steps
-1. [Step 1]
-2. [Step 2]
-
-## Acceptance
-- [Criterion 1]'''
-        versions.append({
-            "type": "C (Template)",
-            "description": "结构化模板，需要填写细节",
-            "template": template,
-            "is_direct": False,
-        })
-    
+【Non-functional】
+- Time complexity:
+- Space complexity:"""
     elif instr_type == "writing":
         if lang == "zh":
-            template = f'''## 写作任务
+            template_c = f"""你是一位专业写作顾问。请撰写以下内容：
+
+【写作任务】
 {stripped}
 
-## 基本信息
-- 受众：[谁]
-- 语气：[正式/亲切/专业]
-- 字数：[多少]
+【受众分析】
+- 目标读者：[年龄、职业、背景]
+- 读者关心什么：
+- 读者已知什么：
 
-## 内容要点
-1. [要点1]
-2. [要点2]
-3. [要点3]
+【写作目的】
+- 核心信息：[必须传达的 1-2 句话]
+- 期望读者采取的行动：[如有]
 
-## 格式要求
-[指定格式]
+【风格要求】
+- 语气：[正式/亲切/严肃/轻松]
+- 语言：[中文/英文]
+- 结构：[总分总/时间顺序/问题-解决方案]
 
-## 初稿
-[在此起草]'''
+【内容框架】
+1. [开头：如何吸引读者]
+2. [主体要点 1]
+3. [主体要点 2]
+4. [结尾：如何收尾]"""
         else:
-            template = f'''## Writing Task
+            template_c = f"""You are a professional writing consultant. Write the following:
+
+【Task】
 {stripped}
 
-## Audience
-[Who]
+【Audience】
+- Target reader: [age, profession, background]
+- What they care about:
+- What they already know:
 
-## Tone
-[Formal/Casual/Professional]
+【Purpose】
+- Core message:
+- Desired action:
 
-## Key Points
-1. [Point 1]
-2. [Point 2]
+【Style】
+- Tone: [formal/casual/serious/playful]
+- Language: [Chinese/English]
+- Structure: [conclusion-first/narrative/problem-solution]
 
-## Draft
-[Write here]'''
-        versions.append({
-            "type": "C (Template)",
-            "description": "结构化模板，引导完成完整写作",
-            "template": template,
-            "is_direct": False,
-        })
-    
+【Content Framework】
+1. [Opening hook]
+2. [Point 1]
+3. [Point 2]
+4. [Closing]"""
+    elif instr_type == "explanation":
+        if lang == "zh":
+            template_c = f"""你是一位擅长用通俗语言解释复杂概念的老师。请解释：
+
+【解释主题】
+{stripped}
+
+【受众画像】
+- 背景：[年龄、职业、技术敏感度]
+- 已有哪些知识：
+- 关心什么问题：
+
+【解释深度】
+- 层次：[科普扫盲/中等理解/深入分析]
+- 重点概念：[1-3 个核心概念，必须讲清楚]
+
+【解释策略】
+- 类比场景：[用生活中的什么来类比]
+- 讲解顺序：[从已知到未知]
+
+【检验理解】
+- 读者读完后能回答：[1-2 个检验问题]
+- 常见误解：[提前澄清 1 个误区]"""
+        else:
+            template_c = f"""You are a teacher skilled at explaining complex concepts simply. Explain:
+
+【Topic】
+{stripped}
+
+【Audience Profile】
+- Background: [age, profession, tech savviness]
+- Prior knowledge:
+- Concerns:
+
+【Depth】
+- Level: [popular/technical/in-depth]
+- Core concepts: [1-3 must-understand]
+
+【Strategy】
+- Analogy: [real-life scenario]
+- Sequence: [known to unknown]
+
+【Check Understanding】
+- Key question reader can answer after:"""
+    else:
+        template_c = f"""请帮我完成以下任务：
+
+【任务】
+{stripped}
+
+【背景】
+- 执行者身份：
+- 目标：
+- 约束条件：
+
+【质量标准】
+- 什么样的结果算好："""
+
+    versions.append({
+        "type": "C (Complete)",
+        "description": "最完整的 prompt 模板，覆盖所有关键维度",
+        "template": template_c,
+        "is_direct": False,
+    })
+
     return versions[:count]
 
 # =============================================================================
@@ -1038,22 +757,48 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
     model = cfg.get("llm_model", "gpt-4")
     endpoint = cfg.get("llm_endpoint", "https://api.openai.com/v1/chat/completions")
 
-    if not api_key:
-        return optimize(instruction)
-
-    generated = generate_with_llm(instruction, api_key, model, endpoint, instruction_type)
-    if not generated:
-        return optimize(instruction)
-
     analysis = analyze_instruction(instruction)
-    version: VersionResult = {
-        "type": "LLM (Custom)",
-        "description": "LLM 生成的优化版本（需自行配置 API key）",
-        "template": generated,
-        "is_direct": True,
-    }
-    evaluation = evaluate_version(version, analysis)
+    instr_type = instruction_type or analysis["instruction_type"]
 
+    # No API key: fall back to structured template
+    if not api_key:
+        generated = generate_fallback_prompt(instruction, instr_type)
+        version: VersionResult = {
+            "type": "Fallback (No API)",
+            "description": "结构化模板（未配置 API key，使用内置模板）",
+            "template": generated,
+            "is_direct": False,
+        }
+        evaluation = evaluate_version(version, analysis)
+        return {
+            "original": instruction,
+            "analysis": analysis,
+            "versions": [version],
+            "evaluations": [evaluation],
+            "recommended_idx": 0,
+            "recommended_version": version,
+            "recommended_evaluation": evaluation,
+        }
+
+    generated = generate_with_llm(instruction, api_key, model, endpoint, instr_type)
+    # LLM call failed: fall back to structured template
+    if not generated:
+        generated = generate_fallback_prompt(instruction, instr_type)
+        version = {
+            "type": "Fallback (LLM Failed)",
+            "description": "结构化模板（LLM 调用失败，使用内置模板）",
+            "template": generated,
+            "is_direct": False,
+        }
+    else:
+        version = {
+            "type": "LLM Optimized",
+            "description": "LLM 生成的优化 prompt（需配置 API key）",
+            "template": generated,
+            "is_direct": False,
+        }
+
+    evaluation = evaluate_version(version, analysis)
     return {
         "original": instruction,
         "analysis": analysis,
@@ -1070,25 +815,37 @@ def optimize_with_llm(instruction: str, instruction_type: str = None) -> Optimiz
 # =============================================================================
 
 def optimize(instruction: str, use_llm: bool = False) -> OptimizationResult:
-    """Main optimization pipeline. Set use_llm=True to prefer LLM generation."""
-    if use_llm:
-        analysis = analyze_instruction(instruction)
-        return optimize_with_llm(instruction, instruction_type=analysis["instruction_type"])
-
-    analysis = analyze_instruction(instruction)
-    versions = generate_optimized_versions(instruction)
-    evaluations = [evaluate_version(v, analysis) for v in versions]
-    recommended_idx = recommend_version(evaluations, analysis)
+    """
+    Main optimization pipeline. Set use_llm=True to prefer LLM generation.
     
-    return {
-        "original": instruction,
-        "analysis": analysis,
-        "versions": versions,
-        "evaluations": evaluations,
-        "recommended_idx": recommended_idx,
-        "recommended_version": versions[recommended_idx],
-        "recommended_evaluation": evaluations[recommended_idx],
-    }
+    Always outputs "优化后的 prompt 文本" (optimized prompt text),
+    not direct content (code/email/explanation).
+    """
+    analysis = analyze_instruction(instruction)
+    instr_type = analysis["instruction_type"]
+
+    if use_llm:
+        # LLM path: generate truly optimized prompt
+        return optimize_with_llm(instruction, instruction_type=instr_type)
+    else:
+        # Fallback path: generate structured prompt template
+        generated = generate_fallback_prompt(instruction, instr_type)
+        version: VersionResult = {
+            "type": "Fallback (Structured)",
+            "description": "结构化 prompt 模板，无需 LLM API",
+            "template": generated,
+            "is_direct": False,
+        }
+        evaluation = evaluate_version(version, analysis)
+        return {
+            "original": instruction,
+            "analysis": analysis,
+            "versions": [version],
+            "evaluations": [evaluation],
+            "recommended_idx": 0,
+            "recommended_version": version,
+            "recommended_evaluation": evaluation,
+        }
 
 # =============================================================================
 # Feedback & Learning
