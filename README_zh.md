@@ -1,129 +1,247 @@
-# prompt-autopilot
+# 🚀 prompt-autopilot
 
-**个人测试项目 | 欢迎 Clone/Star/Fork 来评价**
+**让 AI 工具的输出从"模板"变成"专业工具"**
 
----
+> 无需 API Key · 开箱即用 · 中英双语
 
-## 什么是 prompt-autopilot？
-
-**prompt-autopilot** 是一个与工具无关的提示词优化系统。它能够分析你原始的指令，生成多个优化版本，用质量分数进行评估，并随着时间推移学习你的偏好。
-
-> 🔗 英文说明：[English README](README_en.md)
+[![GitHub stars](https://img.shields.io/github/stars/cancaries/prompt-autopilot?style=flat-square)](https://github.com/cancaries/prompt-autopilot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
 ---
 
-## 功能特点
+## ⚡ 先看效果
 
-- 🔍 **分析** — 检测缺失信息、歧义表述、未说明的假设
-- ✨ **优化** — 生成 3 个版本：简洁版、详细版、结构化版
-- 📊 **评估** — 从清晰度、具体性、完整性三个维度评分（1-10）
-- ✅ **推荐** — 选择最佳版本并解释原因
-- 🧠 **学习** — 记住你的偏好，下次优化更精准
+```
+$ pma "做个登录功能"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧠 双视角分析 · 登录功能
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 原始指令：帮我做个登录功能
+
+⚡ 置信度评估
+综合置信度：62%
+🔧 工程师：70%  ████████░░
+🎯 产品：55%    ██████░░░░
+⚠️ 有 3 个缺口需要确认
+
+🔧 工程师视角发现
+━━━━━━━━━━━━━━━━━━━━
+✅ 理解：用户认证系统
+❌ 认证方式未指定（JWT/Session/OAuth？）
+❌ 数据存储未指定（MySQL/PostgreSQL？）
+❌ 错误处理未考虑
+
+💡 建议：用 JWT + bcrypt + PostgreSQL
+
+🎯 产品视角发现
+━━━━━━━━━━━━━━━━━━━━
+✅ 理解：用户需要登录能力
+❌ 可能需要注册功能
+❌ 可能需要第三方登录（微信/Google）
+❌ 可能需要密码找回
+
+💡 确认：只登录？还是要注册？
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**优化输出：**
+
+```
+$ pma "帮我写排序算法"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✨ 优化后的编程指令
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 🎯 任务
+用 Python 实现快速排序算法
+
+## 📥 输入
+类型：整数数组
+范围：长度 1-100000，元素 0-10^9
+示例：[3, 6, 8, 10, 1, 2, 1]
+
+## 📤 输出
+类型：整数数组（升序）
+示例：[1, 1, 2, 3, 6, 8, 10]
+
+## ⚡ 性能
+时间：O(n log n) 平均 | 空间：O(log n)
+
+## 🛡️ 边界
+- 空数组 → []
+- 单元素 → [x]
+- 重复元素 → 保持相对顺序
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+综合 9.0/10 · 清晰度 9 · 具体性 9 · 完整性 9
+```
 
 ---
 
-## 快速开始
+## 📦 安装（30 秒上手）
 
 ```bash
-# pip 安装
+# 方式一：pip 安装（推荐）
 pip install prompt-autopilot
 
-# 或从源码安装
+# 方式二：源码安装
 git clone https://github.com/cancaries/prompt-autopilot.git
 cd prompt-autopilot
 pip install -e .
+```
 
-# 使用
-prompt-autopilot optimize "帮我写一封道歉邮件"
-pma "fix the bug"  # 短命令别名
+**无需配置 API Key**，开箱即用！
 
-# 交互模式
-prompt-autopilot
+---
+
+## 🎯 核心功能
+
+### 1. `think` — 双视角深度分析（核心亮点）
+
+```bash
+pma think "做个登录功能"
+```
+
+从**工程师视角**和**产品视角**同时分析同一个指令，找出双方都忽略的问题。
+
+| 视角 | 关注点 |
+|------|--------|
+| 🔧 工程师视角 | 技术完整性、语言/框架/数据库/错误处理 |
+| 🎯 产品视角 | 用户真正需要什么、可能遗漏的需求 |
+
+### 2. `optimize` — 智能推断 + 专业输出
+
+```bash
+pma optimize "帮我写排序算法"
+pma optimize "写一封给投资人的邮件"
+```
+
+**内置智能推断引擎**，常见任务（排序/登录/API/缓存...）自动补充默认值，不再输出空白占位符。
+
+### 3. `analyze` — 快速分析
+
+```bash
+pma analyze "解释一下区块链"
+```
+
+快速检测缺失的要素。
+
+---
+
+## 💡 对比：Before / After
+
+| 场景 | Before（模板） | After（专业） |
+|------|---------------|--------------|
+| 排序 | `【约束】输入：整数数组` | `【输入】类型：整数数组，范围：长度 1-100000，示例：[3,1,2]` |
+| 登录 | `【约束】[请补充认证方式]` | `【认证】JWT，bcrypt 哈希，24h 有效期，密码重置` |
+| 写邮件 | `【受众】[描述目标读者]` | `【受众】30-40岁投资人，关注ROI，数据驱动` |
+| 解释概念 | `【受众】[受众背景]` | `【受众】非技术背景的职场人士，用银行转账做类比` |
+
+---
+
+## 🎨 支持的任务类型
+
+| 类型 | 示例输入 | 推断内容 |
+|------|---------|---------|
+| **排序算法** | `帮我写排序` | Python, O(n log n), 边界情况 |
+| **登录/认证** | `做个登录功能` | JWT + bcrypt + PostgreSQL |
+| **API 接口** | `写个API` | RESTful, JSON, 参数校验, JWT 认证 |
+| **LRU 缓存** | `实现缓存` | O(1), get/put, 容量限制 |
+| **数据库操作** | `增删改查` | SQL, 防注入, 事务处理 |
+| **写作任务** | `写一封邮件` | 受众 + 目的 + 语气 + 核心要点 |
+| **概念解释** | `解释区块链` | 受众背景 + 类比场景 + 核心概念 |
+
+---
+
+## 🔧 高级用法
+
+### 配置 API Key（可选，使用 LLM 生成）
+
+```bash
+# 设置 OpenAI API Key
+pma config --api-key sk-xxx --model gpt-4
+
+# 使用 LLM 优化（需要 API Key）
+pma optimize "帮我写个功能" --use-llm
+```
+
+### 交互模式
+
+```bash
+pma
+# 进入交互模式，输入任意指令
+```
+
+### 记录反馈（学习你的偏好）
+
+```bash
+pma feedback -i "帮我写排序" -c B --feedback "A太简单，C太复杂"
 ```
 
 ---
 
-## 示例输出
-
-```
-$ pma "fix the bug"
-
-============================================================
-📝 Original: fix the bug
-
-⚠️ Missing:
-  - Very brief - may lack necessary context
-  - No output format specified
-  - No constraints or limitations stated
-
-✅ Recommended: Version C (Structured)
-   Score: 8.0/10 (B)
-
-## Task
-fix the bug
-
-## Input
-[What I will provide]
-
-## Constraints
-- [Limitation 1]
-- [Limitation 2]
-
-## Output Format
-[Describe expected format]
-
-## Success Criteria
-- [Criterion 1]
-- [Criterion 2]
-```
-
----
-
-## 工作流程
-
-| 步骤 | 描述 |
-|------|------|
-| **1. 分析** | 检查缺失的上下文、格式、约束条件 |
-| **2. 优化** | 生成 3 个版本（简洁/详细/结构化） |
-| **3. 评估** | 从清晰度、具体性、完整性评分 |
-| **4. 推荐** | 选择最佳版本并说明原因 |
-| **5. 学习** | 记住偏好，下次优化更准确 |
-
----
-
-## 集成方式
-
-可与任何 AI 工具配合使用：
+## 🏗️ 与其他工具集成
 
 | 工具 | 集成方式 |
 |------|---------|
-| **OpenClaw** | 放入 `~/.openclaw/skills/prompt-autopilot/` |
 | **Cursor** | 添加到 `.cursorrules` |
 | **Claude Code** | `--system-prompt` 注入 |
-| **Codex** | MCP 服务器集成 |
-| **通用 LLM** | 作为独立 CLI 或系统提示词使用 |
+| **VS Code Copilot** | 作为 Snippet 使用 |
+| **OpenClaw** | 放入 `~/.openclaw/skills/prompt-autopilot/` |
 
-详细设置说明请参阅 [INTEGRATION.md](INTEGRATION.md)。
-
----
-
-## 反馈与贡献
-
-🎯 **欢迎反馈！** 这是一个测试项目，所有建议、问题报告和复刻都非常欢迎。
-
-- ⭐ 觉得有用的话请 Star
-- 🍴 欢迎 Fork 创建你自己的版本
-- 🐛 通过 GitHub Issues 报告问题
-- 💡 分享你的使用场景和改进建议
+详见 [INTEGRATION.md](INTEGRATION.md)。
 
 ---
 
-## 许可证
+## 🆚 为什么不直接让 AI 写代码？
 
-MIT 许可证 — 详见 [LICENSE](LICENSE)。
+| | 直接问 AI | prompt-autopilot |
+|---|---|---|
+| 登录功能 | `帮我做个登录功能` | 得到模糊答案 |
+| **prompt-autopilot** | 先问清楚：用什么认证？数据库？注册功能要不要？ | 得到完整专业答案 |
+| 排序算法 | `写个排序` | 得到缺边界的代码 |
+| **prompt-autopilot** | 自动推断：O(n log n)、空数组/重复元素的处理 | 得到可直接提交的代码 |
+
+---
+
+## 📂 项目结构
+
+```
+prompt-autopilot/
+├── src/prompt_autopilot/
+│   ├── core.py              # 核心逻辑 + 智能推断引擎
+│   ├── display.py           # 格式化输出
+│   ├── dual_perspective.py   # 双视角分析系统
+│   └── cli.py               # 命令行入口
+├── README_zh.md             # 本文档
+├── INTEGRATION.md           # 集成指南
+└── LICENSE                  # MIT
+```
+
+---
+
+## 🤝 贡献
+
+欢迎 Star、Fork、提 Issue！
+
+```bash
+git clone https://github.com/cancaries/prompt-autopilot.git
+cd prompt-autopilot
+pip install -e .[dev]
+pytest
+```
+
+---
+
+## 📜 许可证
+
+MIT License · 详见 [LICENSE](LICENSE)
 
 ---
 
 <p align="center">
-  <b>⭐ 如果这个项目对你有帮助，请给我一个 Star！⭐</b>
+  <b>⭐ 如果对你有帮助，请给一个 Star！⭐</b>
 </p>

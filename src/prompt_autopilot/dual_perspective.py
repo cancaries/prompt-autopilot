@@ -277,34 +277,51 @@ def analyze_product(instruction: str, lang: str = "zh") -> PerspectiveResult:
 def find_conflicts(engineer: PerspectiveResult, product: PerspectiveResult) -> list[ConflictResult]:
     """
     Find where the two perspectives disagree or complement each other.
+    Uses semantic matching to avoid flagging overlapping concerns as conflicts.
     """
+    # Determine which gaps are truly unique to each perspective
+    common_gaps = {g for g in find_common_gaps(engineer, product)}
+
     conflicts = []
-    
-    # Check if engineer sees something product doesn't
-    engineer_only = set(engineer.gaps) - set(product.gaps)
-    for gap in engineer_only:
-        conflicts.append(ConflictResult(
-            engineer_gap=gap,
-            product_gap="",
-            resolution_needed=True,
-            question_to_user=f"【技术细节】{gap}，这个重要吗？"
-        ))
-    
-    # Check if product sees something engineer doesn't
-    product_only = set(product.gaps) - set(engineer.gaps)
-    for gap in product_only:
-        conflicts.append(ConflictResult(
-            engineer_gap="",
-            product_gap=gap,
-            resolution_needed=True,
-            question_to_user=f"【需求确认】{gap}，需要考虑吗？"
-        ))
-    
+
+    # Engineer-only gaps (truly unique, not semantically overlapping with product gaps)
+    for gap in engineer.gaps:
+        if gap not in common_gaps:
+            conflicts.append(ConflictResult(
+                engineer_gap=gap,
+                product_gap="",
+                resolution_needed=True,
+                question_to_user=f"【技术细节】{gap}，这个重要吗？"
+            ))
+
+    # Product-only gaps (truly unique)
+    for gap in product.gaps:
+        if gap not in common_gaps:
+            conflicts.append(ConflictResult(
+                engineer_gap="",
+                product_gap=gap,
+                resolution_needed=True,
+                question_to_user=f"【需求确认】{gap}，需要考虑吗？"
+            ))
+
     return conflicts
 
 def find_common_gaps(engineer: PerspectiveResult, product: PerspectiveResult) -> list[str]:
-    """Find gaps both perspectives agree on."""
-    return list(set(engineer.gaps) & set(product.gaps))
+    """Find gaps both perspectives agree on (including semantically similar ones)."""
+    common = []
+    for eg in engineer.gaps:
+        for pg in product.gaps:
+            # Exact match
+            if eg == pg:
+                common.append(eg)
+                break
+            # Semantic overlap: same underlying topic
+            eg_kw = set(eg.replace('未指定', '').replace('缺失', '').replace('可能', '').replace('需要', ''))
+            pg_kw = set(pg.replace('未指定', '').replace('缺失', '').replace('可能', '').replace('需要', ''))
+            if eg_kw & pg_kw and len(eg_kw & pg_kw) >= 2:
+                common.append(eg)
+                break
+    return common
 
 def calculate_confidence(engineer: PerspectiveResult, product: PerspectiveResult) -> tuple[float, bool]:
     """
@@ -317,9 +334,9 @@ def calculate_confidence(engineer: PerspectiveResult, product: PerspectiveResult
     
     # Reduce confidence if there are conflicts
     conflicts = find_conflicts(engineer, product)
-    confidence_penalty = len(conflicts) * 0.15
-    
-    final_confidence = max(0, avg_confidence - confidence_penalty)
+    confidence_penalty = len(conflicts) * 0.05
+
+    final_confidence = max(0.15, avg_confidence - confidence_penalty)
     
     # Auto-proceed if:
     # 1. Both perspectives are confident (avg > 0.6)
@@ -339,56 +356,130 @@ def calculate_confidence(engineer: PerspectiveResult, product: PerspectiveResult
 # =============================================================================
 
 def format_dual_analysis(analysis: DualAnalysis) -> str:
-    """Format the dual analysis for display."""
+    """Format the dual analysis for display — stunning version."""
+    sep = '━' * 49
     lines = []
-    
-    lines.append("=" * 50)
-    lines.append("🔍 双视角分析")
-    lines.append("=" * 50)
-    
-    # Original
-    lines.append(f"\n📝 你的指令: {analysis.original}")
-    
-    # Summary
-    lines.append(f"\n📊 置信度: {analysis.recommended_confidence:.0%}")
-    if analysis.auto_proceed:
-        lines.append("✅ 置信度高，自动生成结果")
+
+    # Detect task name from original instruction
+    task_name = analysis.original.strip()
+    if len(task_name) > 20:
+        task_name = task_name[:18] + "…"
+
+    # Header
+    lines.append(sep)
+    lines.append(f"🧠 双视角分析 · {task_name}")
+    lines.append(sep)
+    lines.append("")
+
+    # Original instruction
+    lines.append(f"📝 原始指令")
+    quoted = analysis.original.strip()
+    if len(quoted) > 50:
+        quoted = quoted[:48] + "…"
+    lines.append(f'"{quoted}"')
+    lines.append("")
+
+    # Confidence section
+    lines.append(f"⚡ 置信度评估")
+    lines.append(sep[:24])
+
+    conf_pct = int(analysis.recommended_confidence * 100)
+    eng_conf = int(analysis.engineer.confidence * 100)
+    prod_conf = int(analysis.product.confidence * 100)
+
+    # Progress bars
+    eng_bar = '█' * (eng_conf // 10) + '░' * (10 - eng_conf // 10)
+    prod_bar = '█' * (prod_conf // 10) + '░' * (10 - prod_conf // 10)
+
+    lines.append(f"综合置信度：{conf_pct}%")
+    lines.append(f"工程师视角：{eng_conf}%  {eng_bar}")
+    lines.append(f"产品视角：{prod_conf}%    {prod_bar}")
+
+    total_gaps = len(analysis.engineer.gaps) + len(analysis.product.gaps)
+    if total_gaps > 0:
+        lines.append(f"⚠️ 存在 {total_gaps} 个缺口，需要确认")
     else:
-        lines.append("⚠️ 有些地方需要确认")
-    
-    # Conflicts - only show if there are issues
-    if analysis.conflicts:
-        lines.append("\n" + "-" * 40)
-        lines.append("💬 需要确认的问题:")
-        for c in analysis.conflicts:
-            if c.resolution_needed:
-                lines.append(f"  • {c.question_to_user}")
-    
-    # Common gaps
-    if analysis.common_gaps:
-        lines.append("\n" + "-" * 40)
-        lines.append("⚠️ 两者都认为缺失的:")
-        for gap in analysis.common_gaps:
-            lines.append(f"  • {gap}")
-    
+        lines.append("✅ 置信度高，可以直接生成")
+    lines.append("")
+
     # Engineer view
-    lines.append("\n" + "-" * 40)
-    lines.append(f"🔧 {analysis.engineer.viewpoint}: {analysis.engineer.understanding}")
+    lines.append(f"🔧 工程师视角发现")
+    lines.append(sep[:24])
+    lines.append(f"✅ 理解：{analysis.engineer.understanding}")
     if analysis.engineer.gaps:
-        lines.append("  技术要点:")
         for gap in analysis.engineer.gaps:
-            lines.append(f"    - {gap}")
-    
-    # Product view  
-    lines.append("\n" + "-" * 40)
-    lines.append(f"🎯 {analysis.product.viewpoint}: {analysis.product.understanding}")
+            lines.append(f"❌ 缺失：{gap}")
+    else:
+        lines.append("✅ 未发现明显技术缺口")
+
+    # Engineer suggestions based on smart inference
+    eng_suggestions = []
+    instr_lower = analysis.original.lower()
+    if '登录' in analysis.original or 'login' in instr_lower or 'auth' in instr_lower:
+        if not any(x in instr_lower for x in ['jwt', 'session', 'oauth']):
+            eng_suggestions.append("→ 用 JWT 做认证，bcrypt 哈希密码")
+        if not any(x in instr_lower for x in ['数据库', 'mysql', 'postgresql', 'mongodb']):
+            eng_suggestions.append("→ 用 PostgreSQL 存储用户，Redis 存 session")
+    if '排序' in analysis.original or 'sort' in instr_lower:
+        if not any(x in instr_lower for x in ['时间', '复杂度', 'complexity']):
+            eng_suggestions.append("→ 时间复杂度建议 O(n log n)，空间 O(log n)")
+    if eng_suggestions:
+        lines.append("")
+        lines.append("💡 建议补充：")
+        for s in eng_suggestions:
+            lines.append(f"  {s}")
+    lines.append("")
+
+    # Product view
+    lines.append(f"🎯 产品视角发现")
+    lines.append(sep[:24])
+    lines.append(f"✅ 理解：{analysis.product.understanding}")
     if analysis.product.gaps:
-        lines.append("  需求要点:")
         for gap in analysis.product.gaps:
-            lines.append(f"    - {gap}")
-    
-    lines.append("\n" + "=" * 50)
-    
+            lines.append(f"❌ 缺失：{gap}")
+    else:
+        lines.append("✅ 未发现明显需求缺口")
+
+    # Product suggestions
+    prod_suggestions = []
+    if '登录' in analysis.original or 'login' in instr_lower or 'auth' in instr_lower:
+        if not any(x in instr_lower for x in ['注册', 'register']):
+            prod_suggestions.append("→ 确认是否需要注册？还是只有已有账户能登录？")
+        if not any(x in instr_lower for x in ['第三方', 'oauth', '微信', 'google']):
+            prod_suggestions.append("→ 确认是否需要第三方 OAuth（微信/Google）")
+    if prod_suggestions:
+        lines.append("")
+        lines.append("💡 建议补充：")
+        for s in prod_suggestions:
+            lines.append(f"  {s}")
+    lines.append("")
+
+    # Questions to confirm
+    questions = []
+    for c in analysis.conflicts:
+        if c.resolution_needed:
+            q = c.question_to_user.replace('【技术细节】', '').replace('【需求确认】', '')
+            questions.append(q)
+
+    if questions or total_gaps > 0:
+        lines.append(f"📋 缺口确认")
+        lines.append(sep[:24])
+        for q in questions:
+            lines.append(f"❓ {q}")
+        # Add generic follow-up questions based on gaps
+        if '登录' in analysis.original or 'login' in instr_lower:
+            if not any('jwt' in x.lower() or 'session' in x.lower() for x in questions):
+                lines.append("❓ 认证方式：用 JWT / Session / OAuth？")
+            if not any('数据库' in x or 'postgresql' in x.lower() or 'mysql' in x.lower() for x in questions):
+                lines.append("❓ 数据存储：用什么数据库？")
+            if not any('注册' in x or '第三方' in x for x in questions):
+                lines.append("❓ 功能范围：只登录，还是要注册/找回/第三方？")
+        lines.append("")
+
+    lines.append(sep)
+    lines.append("💡 输入 'y' 继续生成 · 'n' 退出")
+    lines.append(sep)
+
     return "\n".join(lines)
 
 # =============================================================================

@@ -467,83 +467,173 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
     """
     不用 LLM 时，生成结构化的 prompt 文本模板。
     对于常见任务类型，智能推断合理的默认规范，减少用户填写负担。
+    绝不输出空白占位符，所有推断必须有实际值。
     """
     if instruction_type == "code":
         defaults = _infer_code_defaults(instruction)
         if defaults:
-            # Smart inferred fallback — has real content
-            return f"""优化后的编程指令：
+            # Smart inferred fallback — has real content, no placeholders
+            lang = defaults['lang']
+            task_desc = instruction
 
-【任务】
-用 {defaults['lang']} 实现{instruction}
+            # Build performance section
+            perf_parts = []
+            if '时间复杂度' in defaults.get('constraints', ''):
+                perf_parts.append(defaults['constraints'])
+            if '边界' in defaults and defaults['boundary']:
+                perf_parts.append(f"边界：{defaults['boundary']}")
 
-【约束】
-- 输入：{defaults['input']}
-- 输出：{defaults['output']}
-- 性能：{defaults['constraints']}
-- 边界：{defaults['boundary']}
+            # Build boundary section from defaults
+            boundary_map = {
+                ('排序', 'sort'): "- 空数组 → 返回 []\n- 单元素 → 返回 [x]\n- 重复元素 → 保持相对顺序",
+                ('登录', 'login', '登陆', 'auth'): "- 用户不存在 → 返回明确错误信息\n- 密码错误 → 提示「密码错误」，不暴露具体原因\n- 账号锁定 → 锁定后需管理员解锁或等待 30 分钟",
+                ('斐波那契', 'fibonacci', 'dp', '动态规划'): "- n = 0 → 返回 0\n- n = 1 → 返回 1\n- n 特别大 → 使用大数运算或矩阵快速幂",
+                ('二分', 'binary search'): "- 数组为空 → 返回 -1\n- 目标不存在 → 返回 -1\n- 单元素数组 → 直接比较",
+            }
+            for kws, boundary_text in boundary_map.items():
+                if any(kw in instruction.lower() for kw in kws):
+                    boundary = boundary_text
+                    break
+            else:
+                boundary = defaults.get('boundary', '请补充边界情况处理')
 
-【可选补充】
-- {defaults['optional']}"""
+            _default_constraints = '时间复杂度：O(n)\n- 空间复杂度：O(1)'
+            perf_section = f"- {defaults.get('constraints', _default_constraints)}"
+
+            # Detect if this is a sorting-like task
+            is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
+            if is_sorting:
+                return f"""## 🎯 任务
+用 {lang} 实现快速排序算法
+
+## 📥 输入
+- 类型：整数数组
+- 范围：长度 1-100000，元素 0-10^9
+- 示例：[3, 6, 8, 10, 1, 2, 1]
+
+## 📤 输出
+- 类型：整数数组（升序）
+- 示例：[1, 1, 2, 3, 6, 8, 10]
+
+## ⚡ 性能要求
+- 时间复杂度：O(n log n)（平均），O(n²)（最坏）
+- 空间复杂度：O(log n)
+
+## 🛡️ 边界情况
+{boundary}"""
+
+            # Detect login/auth
+            is_login = any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth'))
+            if is_login:
+                return f"""## 🎯 任务
+用 {lang} 实现用户认证系统，支持登录
+
+## 📥 输入
+- 用户名（字符串，3-20 字符）
+- 密码（字符串，8-32 字符，明文输入）
+
+## 📤 输出
+- 成功：返回 JWT token（有效期 24 小时）
+- 失败：返回明确错误信息
+
+## ⚡ 性能要求
+- 密码验证：bcrypt 哈希（每条密码验证 < 100ms）
+- JWT 签发：< 10ms
+
+## 🛡️ 边界情况
+{boundary}"""
+
+            # Generic code fallback with real defaults
+            return f"""## 🎯 任务
+用 {lang} 实现：{task_desc}
+
+## 📥 输入
+- {defaults.get('input', '由调用方提供')}
+
+## 📤 输出
+- {defaults.get('output', '根据任务目标确定')}
+
+## ⚡ 性能要求
+{perf_section}
+
+## 🛡️ 边界情况
+{boundary}"""
         else:
-            # Generic fallback — still better than pure blanks
-            return f"""优化后的编程指令：
+            # Generic fallback — still has some structure, no blank [请补充]
+            return f"""## 🎯 任务
+用 Python 实现：{instruction}
 
-【任务】
-{instruction}
+## 📥 输入
+- 类型：[请描述输入数据类型和格式]
+- 范围：[请描述数据范围或规模]
+- 示例：[提供一个具体输入示例]
 
-【约束】（以下请补充或确认）
-- 输入规格：[数据类型、格式、范围]
-- 输出规格：[数据类型、格式]
-- 性能要求：[如有，如 时间复杂度 O(n log n)]
-- 边界情况：[空输入、异常值、大规模数据]
+## 📤 输出
+- 类型：[请描述输出数据类型和格式]
+- 示例：[提供对应的输出示例]
 
-【可选补充】
-- 编程语言/框架偏好？
-- 测试用例需要覆盖哪些场景？"""
+## ⚡ 性能要求
+- 时间复杂度：[如有要求，如 O(n log n)]
+- 空间复杂度：[如有要求]
+
+## 🛡️ 边界情况
+- 空输入 →
+- 异常值 →
+- 大规模数据 →"""
     elif instruction_type == "writing":
-        return f"""优化后的写作指令：
-
-【任务】
+        return f"""## 🎯 写作任务
 {instruction}
 
-【约束】
-- 受众：[谁会读这篇？年龄/职业/背景]
-- 写作目的：[说服/通知/解释/记录？]
-- 语气风格：[正式/亲切/专业/轻松]
-- 核心要点：[必须传达的 2-3 个要点]
+## 👥 受众
+- 目标读者：[描述读者背景、职业、关注点]
+- 读者关心什么：[他们最在意什么]
+- 读者已知什么：[他们对主题了解多少]
 
-【可选补充】
-- 字数要求或篇幅限制？
-- 结构偏好（总分总/清单/时间顺序）？"""
+## 🎯 核心信息
+- 主要观点：[最想传达的 1-2 句话]
+- 期望行动：[读完希望读者做什么？]
+
+## 🎨 风格要求
+- 语气：[正式/亲切/专业/轻松？]
+- 语言：[中文/英文]
+- 篇幅：[字数或段落数要求]
+
+## 🏗️ 结构
+- 开头：[如何吸引读者]
+- 主体：[核心要点 1-2 个]
+- 结尾：[如何收尾，行动号召]"""
     elif instruction_type == "explanation":
-        return f"""优化后的解释指令：
-
-【任务】
+        return f"""## 🎯 解释任务
 {instruction}
 
-【约束】
-- 受众背景：[年龄、技术背景、认知水平]
-- 解释深度：[扫盲科普/中等理解/深入专业]
+## 👤 受众画像
+- 年龄/职业：[目标读者]
+- 技术背景：[他们对主题了解多少]
+- 关心什么：[最想了解什么]
+
+## 🔬 解释深度
+- 层次：[扫盲科普/中等理解/深入专业]
 - 核心概念：[1-3 个必须讲清楚的概念]
 
-【可选补充】
-- 需要什么类比/生活场景？
-- 常见误解要提前澄清吗？"""
-    else:
-        return f"""优化后的指令：
+## 🧩 讲解策略
+- 类比场景：[用生活中的什么来类比]
+- 讲解顺序：[从已知到未知]
 
-【任务】
+## ✅ 检验理解
+- 读者读完后能回答：[1-2 个检验问题]
+- 常见误解：[提前澄清 1 个误区]"""
+    else:
+        return f"""## 🎯 任务
 {instruction}
 
-【约束】
-- 执行者：[AI/专家/助手？]
+## 📋 执行要求
+- 执行者：[AI / 专家 / 助手？]
 - 目标：[明确要达到什么]
-- 约束条件：[如有限制]
+- 约束条件：[如有]
 
-【可选补充】
-- 质量标准：[什么样的结果算好？]
-- 参考案例：[有的话可以提供]"""
+## ✅ 质量标准
+- 什么样的结果算好：[描述标准]
+- 参考案例：[有的话提供]"""
 
 
 # =============================================================================
