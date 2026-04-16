@@ -1074,11 +1074,21 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
     """
     Generate optimized prompt versions for the given instruction.
     All versions output structured prompt TEXT (not direct content).
+    Uses generate_fallback_prompt for all email/writing subtypes to ensure
+    proper specialized templates are used (rejection_email, notification_email, etc.).
     """
     analysis = analyze_instruction(instruction)
     instr_type = analysis["instruction_type"]
     lang = analysis["language"]
     stripped = instruction.strip()
+
+    # Email subtypes use generate_fallback_prompt for ALL versions since
+    # it already has complete, well-structured templates for each email type
+    EMAIL_TYPES = {
+        "rejection_email", "notification_email", "complaint_email",
+        "apology_email", "report_email"
+    }
+    SPECIALIZED_TYPES = EMAIL_TYPES | {"writing", "explanation", "code"}
 
     versions = []
 
@@ -1091,79 +1101,135 @@ def generate_optimized_versions(instruction: str, count: int = 3) -> list[Versio
         "is_direct": False,
     })
 
-    # Version B: More detailed structured prompt
-    if instr_type == "code":
-        if lang == "zh":
-            template_b = f"""用 Python 实现以下编程任务：
+    if count == 1:
+        return versions
 
-{stripped}
+    # Version B: For specialized types, use fallback with more specificity
+    # For generic types, use a more detailed version
+    if instr_type in EMAIL_TYPES or instr_type == "writing":
+        # Email/writing: fallback template is already comprehensive; add a coaching note
+        template_b = generate_fallback_prompt(stripped, instr_type)
+        # Add coaching section for more detail
+        template_b += """
 
-具体要求：
-- 输入：[描述输入格式，如 整数数组]
-- 输出：[描述输出格式，如 排序后的整数数组]
-- 边界情况：[如 空数组、重复元素、大规模数据]
-- 性能要求：[如有，如 时间复杂度 O(n log n)]"""
+## 🔍 进阶要点（Version B 补充）
+- 语气微调：[根据收件人身份调整，如 面试官/客户/上级]
+- 情感控制：[避免过度负面或过度热情]
+- 行动号召：[明确读者下一步该做什么]"""
+    elif instr_type == "code":
+        defaults = _infer_code_defaults(instruction) or {}
+        lang_default = defaults.get('lang', '[编程语言，如 Python]')
+        perf = defaults.get('constraints', '时间复杂度：O(n)\n- 空间复杂度：O(1)')
+        boundary = defaults.get('boundary', '请补充边界情况处理')
+        is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
+        if is_sorting:
+            template_b = f"""## 🎯 任务
+用 {lang_default} 实现快速排序算法
+
+## 📥 输入
+- 类型：整数数组
+- 范围：长度 1-100000，元素 0-10^9
+- 示例：[3, 6, 8, 10, 1, 2, 1]
+
+## 📤 输出
+- 类型：整数数组（升序）
+- 示例：[1, 1, 2, 3, 6, 8, 10]
+
+## ⚡ 性能要求
+- 时间复杂度：O(n log n)（平均），O(n²)（最坏）
+- 空间复杂度：O(log n)
+
+## 🛡️ 边界情况
+- 空数组 → 返回 []
+- 单元素 → 返回 [x]
+- 重复元素 → 保持相对顺序"""
+        elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
+            template_b = f"""## 🎯 任务
+用 {lang_default} 实现用户认证系统，支持登录
+
+## 📥 输入
+- 用户名（字符串，3-20 字符）
+- 密码（字符串，8-32 字符，明文输入）
+
+## 📤 输出
+- 成功：返回 JWT token（有效期 24 小时）
+- 失败：返回明确错误信息
+
+## ⚡ 性能要求
+- 密码验证：bcrypt 哈希（每条密码验证 < 100ms）
+- JWT 签发：< 10ms
+
+## 🛡️ 边界情况
+- 用户不存在 → 返回明确错误信息
+- 密码错误 → 提示「密码错误」，不暴露具体原因
+- 账号锁定 → 锁定后需等待 30 分钟"""
         else:
-            template_b = f"""Implement the following task:
+            template_b = f"""## 🎯 任务
+用 {lang_default} 实现：{stripped}
 
-{stripped}
+## 📥 输入
+- {defaults.get('input', '由调用方提供')}
 
-Requirements:
-- Input: [describe input format]
-- Output: [describe output format]
-- Edge cases: [describe]
-- Performance: [if applicable]"""
-    elif instr_type == "writing":
-        if lang == "zh":
-            template_b = f"""请写一篇关于以下主题的文章：
+## 📤 输出
+- {defaults.get('output', '根据任务目标确定')}
 
-{stripped}
+## ⚡ 性能要求
+- {perf}
 
-写作要求：
-- 受众：[描述目标读者]
-- 语气：[正式/亲切/专业/轻松]
-- 核心信息：[列出 2-3 个必须传达的要点]
-- 字数：[如有限制]"""
-        else:
-            template_b = f"""Write about the following topic:
-
-{stripped}
-
-Requirements:
-- Audience: [describe]
-- Tone: [formal/casual/professional]
-- Key points: [list 2-3]
-- Length: [if specified]"""
+## 🛡️ 边界情况
+{boundary}"""
     elif instr_type == "explanation":
         if lang == "zh":
-            template_b = f"""向以下受众解释：
-
+            template_b = f"""## 🎯 解释任务
 {stripped}
 
-要求：
-- 受众背景：[年龄、技术背景、认知水平]
-- 解释深度：[科普/中等/专业]
+## 👤 受众画像
+- 年龄/职业：[目标读者]
+- 技术背景：[他们对主题了解多少]
+- 关心什么：[最想了解什么]
+
+## 🔬 解释深度
+- 层次：[扫盲科普/中等理解/深入专业]
 - 核心概念：[1-3 个必须讲清楚的概念]
-- 类比场景：[用生活中的什么来类比]"""
+
+## 🧩 讲解策略
+- 类比场景：[用生活中的什么来类比]
+- 讲解顺序：[从已知到未知]
+
+## ✅ 检验理解
+- 读者读完后能回答：[1-2 个检验问题]
+- 常见误解：[提前澄清 1 个误区]"""
         else:
-            template_b = f"""Explain the following to your audience:
+            template_b = f"""## 🎯 任务
+Explain: {stripped}
 
-{stripped}
+## 👤 Audience
+- Background: [target reader]
+- Prior knowledge: [their level]
+- Concerns: [what they want to know]
 
-Requirements:
-- Audience background: [describe]
-- Depth: [popular/technical/expert]
-- Core concepts: [1-3 must-understand concepts]
-- Analogy: [real-life scenario to use]"""
+## 🔬 Depth
+- Level: [popular/technical/expert]
+- Core concepts: [1-3 must-understand]
+
+## 🧩 Strategy
+- Analogy: [real-life scenario]
+- Sequence: [known to unknown]
+
+## ✅ Check
+- Question reader can answer after:"""
     else:
-        template_b = f"""请帮我完成以下任务：
-
+        template_b = f"""## 🎯 任务
 {stripped}
 
-具体要求：
-- 执行者身份：[AI/专家/助手]
+## 📋 执行要求
+- 执行者身份：[AI / 专家 / 助手]
 - 目标：[明确要达到什么]
-- 约束条件：[如有]"""
+- 约束条件：[如有]
+
+## ✅ 质量标准
+- 什么样的结果算好：[描述标准]
+- 参考案例：[有的话提供]"""
 
     versions.append({
         "type": "B (Detailed)",
@@ -1172,104 +1238,84 @@ Requirements:
         "is_direct": False,
     })
 
+    if count <= 2:
+        return versions
+
     # Version C: Most complete structured prompt
-    if instr_type == "code":
-        if lang == "zh":
-            template_c = f"""你是一位编程专家。请用 [编程语言] 实现以下功能：
+    if instr_type in EMAIL_TYPES:
+        # Email types: use a more comprehensive version with AI persona
+        template_c = generate_fallback_prompt(stripped, instr_type)
+        template_c = template_c.replace(
+            "## 🎯 任务",
+            "## 🎯 任务\n你是一位专业商务沟通顾问，擅长撰写得体、有效的电子邮件。"
+        )
+        template_c += """
+
+## 💡 高级技巧（Version C 进阶）
+- 邮件主题行：[如何写一个让人想点开的邮件标题]
+- 开头句式：[如何开头让人想读下去]
+- 收尾句式：[如何收尾给读者正面印象]
+- 长度把控：[一般不超过 5 段]"""
+    elif instr_type == "code":
+        defaults = _infer_code_defaults(instruction) or {}
+        lang_default = defaults.get('lang', '[编程语言，如 Python]')
+        is_sorting = any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
+        if is_sorting:
+            template_c = f"""你是一位编程专家。请用 {lang_default} 实现以下功能：
 
 【任务描述】
 {stripped}
 
 【输入规格】
-- 数据类型：[如 整数、字符串、数组]
-- 数据范围：[如 0-10000]
-- 格式要求：[如 JSON/CSV]
+- 数据类型：整数数组
+- 数据范围：长度 1-100000，元素 0-10^9
+- 格式要求：JSON 数组
 
 【输出规格】
-- 数据类型：
-- 格式要求：
+- 数据类型：整数数组（升序）
+- 格式要求：JSON 数组
 
 【功能要求】
-- 核心逻辑：
-- 边界情况处理：[空输入、异常值、大规模数据]
+- 核心逻辑：使用快速排序（原地分区）
+- 边界情况处理：空数组、单元素、重复元素、大数组
 
 【非功能性要求】
-- 时间复杂度：
-- 空间复杂度：
-- 代码风格：[如 PEP8]"""
+- 时间复杂度：O(n log n)（平均），O(n²)（最坏避免措施：随机主元）
+- 空间复杂度：O(log n)（递归栈）
+- 代码风格：PEP8，类型注解
+
+【测试用例】
+- [] → []
+- [1] → [1]
+- [3, 3, 1, 2, 1] → [1, 1, 2, 3, 3]
+- [10, 9, 8, 7, 6] → [6, 7, 8, 9, 10]"""
         else:
-            template_c = f"""You are a programming expert. Implement the following in [language]:
+            _perf_default = defaults.get('constraints', f'- 时间复杂度：O(n){chr(10)}- 空间复杂度：O(1)')
+            template_c = f"""你是一位编程专家。请用 {lang_default} 实现以下功能：
 
-【Task】
+【任务描述】
 {stripped}
 
-【Input Spec】
-- Data type:
-- Range:
-- Format:
+【输入规格】
+- 数据类型：{defaults.get('input', '由调用方提供')}
+- 数据范围：[根据任务推断]
+- 格式要求：[如 JSON/CSV/API]
 
-【Output Spec】
-- Data type:
-- Format:
+【输出规格】
+- 数据类型：{defaults.get('output', '根据任务目标确定')}
+- 格式要求：[根据任务推断]
 
-【Requirements】
-- Core logic:
-- Edge cases:
+【功能要求】
+- 核心逻辑：[描述核心算法/逻辑]
+- 边界情况处理：{defaults.get('boundary', '空输入、异常值、大规模数据')}
 
-【Non-functional】
-- Time complexity:
-- Space complexity:"""
-    elif instr_type == "writing":
-        if lang == "zh":
-            template_c = f"""你是一位专业写作顾问。请撰写以下内容：
+【非功能性要求】
+{_perf_default}
 
-【写作任务】
-{stripped}
-
-【受众分析】
-- 目标读者：[年龄、职业、背景]
-- 读者关心什么：
-- 读者已知什么：
-
-【写作目的】
-- 核心信息：[必须传达的 1-2 句话]
-- 期望读者采取的行动：[如有]
-
-【风格要求】
-- 语气：[正式/亲切/严肃/轻松]
-- 语言：[中文/英文]
-- 结构：[总分总/时间顺序/问题-解决方案]
-
-【内容框架】
-1. [开头：如何吸引读者]
-2. [主体要点 1]
-3. [主体要点 2]
-4. [结尾：如何收尾]"""
-        else:
-            template_c = f"""You are a professional writing consultant. Write the following:
-
-【Task】
-{stripped}
-
-【Audience】
-- Target reader: [age, profession, background]
-- What they care about:
-- What they already know:
-
-【Purpose】
-- Core message:
-- Desired action:
-
-【Style】
-- Tone: [formal/casual/serious/playful]
-- Language: [Chinese/English]
-- Structure: [conclusion-first/narrative/problem-solution]
-
-【Content Framework】
-1. [Opening hook]
-2. [Point 1]
-3. [Point 2]
-4. [Closing]"""
+【测试用例】
+- [正常用例]
+- [边界用例]
+- [异常用例]"""
     elif instr_type == "explanation":
         if lang == "zh":
             template_c = f"""你是一位擅长用通俗语言解释复杂概念的老师。请解释：
@@ -1292,7 +1338,11 @@ Requirements:
 
 【检验理解】
 - 读者读完后能回答：[1-2 个检验问题]
-- 常见误解：[提前澄清 1 个误区]"""
+- 常见误解：[提前澄清 1 个误区]
+
+【扩展阅读】
+- 相关概念：[可延伸的 1-2 个相关概念]
+- 推荐资源：[如书籍/视频/文章]"""
         else:
             template_c = f"""You are a teacher skilled at explaining complex concepts simply. Explain:
 
@@ -1315,18 +1365,17 @@ Requirements:
 【Check Understanding】
 - Key question reader can answer after:"""
     else:
-        template_c = f"""请帮我完成以下任务：
-
-【任务】
+        template_c = f"""## 🎯 任务
 {stripped}
 
-【背景】
-- 执行者身份：
-- 目标：
-- 约束条件：
+## 📋 执行要求
+- 执行者身份：[AI / 专家 / 助手]
+- 目标：[明确要达到什么]
+- 约束条件：[如有]
 
-【质量标准】
-- 什么样的结果算好："""
+## ✅ 质量标准
+- 什么样的结果算好：[描述标准]
+- 参考案例：[有的话提供]"""
 
     versions.append({
         "type": "C (Complete)",
@@ -1361,13 +1410,15 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
 
     # ---- Blank placeholder penalty ----
     placeholder_count = template.count("：") + template.count(":")
-    blank_phrases = [
+    # Only penalize truly blank/uninformative placeholders, not bracket-style template fields
+    # "[姓名]" is an intentional template field, NOT a blank placeholder
+    truly_blank_phrases = [
         "[请补充]", "[描述]", "[填写]", "[如 有]", "[可选]",
         "[你决定]", "[未知]", "[自定义]", "______",
-        "[数据类型、格式、范围]",  # generic code placeholder
+        "[数据类型、格式、范围]",
         "[数据类型]", "[格式]", "[范围]",
     ]
-    for phrase in blank_phrases:
+    for phrase in truly_blank_phrases:
         if phrase in template:
             blank_penalty = template.count(phrase)
             specificity_score -= blank_penalty
@@ -1414,6 +1465,25 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
         if _has_real_content(template, ["解释深度", "depth", "层次"]):
             specificity_score += 1
         if _has_real_content(template, ["类比", "analogy"]):
+            completeness_score += 1
+
+    # ---- Email subtype scoring (rejection, notification, complaint, apology, report) ----
+    elif instr_type in ("rejection_email", "notification_email", "complaint_email",
+                        "apology_email", "report_email"):
+        # Has complete email structure (称呼, 开场, 正文, ...)
+        if _has_real_content(template, ["称呼"]):
+            completeness_score += 1
+        if _has_real_content(template, ["正文", "正文", "内容"]):
+            completeness_score += 1
+        # Has tone/style guidance
+        if _has_real_content(template, ["语气", "tone", "风格", "专业"]):
+            specificity_score += 1
+        # Has reference template or sample
+        if _has_real_content(template, ["参考模板", "模板", "示例"]):
+            specificity_score += 2
+            completeness_score += 1
+        # Has action/close guidance
+        if _has_real_content(template, ["签名", "祝福", "行动", "收尾"]):
             completeness_score += 1
 
     # ---- Clamp scores ----
@@ -1643,23 +1713,18 @@ def optimize(instruction: str, use_llm: bool = False) -> OptimizationResult:
         # LLM path: generate truly optimized prompt
         return optimize_with_llm(instruction, instruction_type=instr_type)
     else:
-        # Fallback path: generate structured prompt template
-        generated = generate_fallback_prompt(instruction, instr_type)
-        version: VersionResult = {
-            "type": "Fallback (Structured)",
-            "description": "结构化 prompt 模板，无需 LLM API",
-            "template": generated,
-            "is_direct": False,
-        }
-        evaluation = evaluate_version(version, analysis)
+        # Fallback path: generate A/B/C structured prompt versions
+        versions = generate_optimized_versions(instruction, count=3)
+        evaluations = [evaluate_version(v, analysis) for v in versions]
+        recommended_idx = recommend_version(evaluations, analysis)
         return {
             "original": instruction,
             "analysis": analysis,
-            "versions": [version],
-            "evaluations": [evaluation],
-            "recommended_idx": 0,
-            "recommended_version": version,
-            "recommended_evaluation": evaluation,
+            "versions": versions,
+            "evaluations": evaluations,
+            "recommended_idx": recommended_idx,
+            "recommended_version": versions[recommended_idx],
+            "recommended_evaluation": evaluations[recommended_idx],
         }
 
 # =============================================================================

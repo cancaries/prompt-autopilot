@@ -55,25 +55,50 @@ def format_minimal(result: OptimizationResult) -> str:
 Score: {result['recommended_evaluation']['overall']}/10 ({result['recommended_evaluation']['grade']})
 """
 
+def _format_version_block(version: dict, evaluation: dict) -> list[str]:
+    """Format a single version (A/B/C) with its score."""
+    lines = []
+    vtype = version.get('type', '')
+    vdesc = version.get('description', '')
+    template = version.get('template', '')
+    scores = evaluation.get('scores', {})
+    overall = evaluation.get('overall', 0)
+    grade = evaluation.get('grade', '')
+
+    lines.append(f"\n{'=' * 52}")
+    lines.append(f"📋 {vtype}  {vdesc}")
+    lines.append(f"   评分：{overall}/10 ({grade}) · 清晰度 {scores.get('clarity', 0)} · 具体性 {scores.get('specificity', 0)} · 完整性 {scores.get('completeness', 0)}")
+    lines.append('=' * 52)
+
+    section_emoji = {
+        '任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
+        '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
+        '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
+        '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
+        '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅',
+        '邮件结构': '📧', '语气要求': '✍️', '参考模板': '✅',
+    }
+
+    for line in template.split('\n'):
+        if line.startswith('## '):
+            section_name = line.replace('## ', '').strip()
+            emoji = section_emoji.get(section_name, '📌')
+            lines.append(f"\n{emoji} {section_name}")
+        elif line.startswith('【') and '】' in line:
+            section_name = line.strip().lstrip('【').rstrip('】')
+            emoji = section_emoji.get(section_name, '📌')
+            lines.append(f"{emoji} **{section_name}**")
+        elif line.strip():
+            lines.append(line)
+
+    return lines
+
+
 def format_markdown(result: OptimizationResult, show_all: bool = True) -> str:
     """Format as markdown (for AI tool output) — stunning version."""
-    rv = result["recommended_version"]
-    re = result["recommended_evaluation"]
-    e = re
-    scores = e['scores']
-
-    # Parse sections from the recommended template to extract emojis
-    template = rv['template']
-    sections = []
-    if '## ' in template:
-        for line in template.split('\n'):
-            if line.startswith('## '):
-                sections.append(line.replace('## ', '').strip())
-
-    # Detect emoji from task type
-    task_type = result['analysis'].get('instruction_type', 'general')
-    emoji_map = {'code': '🧠', 'writing': '✍️', 'explanation': '💡', 'general': '🎯'}
-    title_emoji = emoji_map.get(task_type, '🎯')
+    versions = result.get('versions', [])
+    evaluations = result.get('evaluations', [])
+    recommended_idx = result.get('recommended_idx', 0)
 
     sep = '━' * 49
     lines = []
@@ -84,56 +109,108 @@ def format_markdown(result: OptimizationResult, show_all: bool = True) -> str:
     lines.append(f"{sep}")
     lines.append("")
 
-    # Score line
-    lines.append(
-        f"综合 {e['overall']}/10 · 清晰度 {scores['clarity']} · 具体性 {scores['specificity']} · 完整性 {scores['completeness']}"
-    )
-    lines.append("")
+    if show_all and len(versions) > 1:
+        # Show all versions
+        for i, (version, evaluation) in enumerate(zip(versions, evaluations)):
+            marker = " ✅ 推荐" if i == recommended_idx else ""
+            block_lines = _format_version_block(version, evaluation)
+            # Add recommendation marker to type line
+            block_lines[0] = block_lines[0].replace(
+                f"📋 {version.get('type', '')}",
+                f"📋 {version.get('type', '')}{marker}"
+            )
+            lines.extend(block_lines)
+        lines.append("")
+        lines.append(sep)
+    else:
+        # Show only recommended version
+        rv = result["recommended_version"]
+        re_ = result["recommended_evaluation"]
+        scores = re_['scores']
+        lines.append(
+            f"综合 {re_['overall']}/10 · 清晰度 {scores['clarity']} · 具体性 {scores['specificity']} · 完整性 {scores['completeness']}  ✅ 推荐"
+        )
+        lines.append("")
 
-    # Emit sections from the template with emoji
-    section_emoji = {'任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
-                     '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
-                     '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
-                     '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
-                     '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅'}
+        template = rv['template']
+        section_emoji = {
+            '任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
+            '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
+            '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
+            '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
+            '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅',
+            '邮件结构': '📧', '语气要求': '✍️', '参考模板': '✅',
+        }
 
-    in_section = False
-    current_section = ""
-    for line in template.split('\n'):
-        if line.startswith('## '):
-            # Close previous section
-            if in_section:
-                lines.append("")
-            # Start new section
-            section_name = line.replace('## ', '').strip().rstrip('】').lstrip('【')
-            emoji = section_emoji.get(section_name, '📌')
-            lines.append(f"## {emoji} {section_name}")
-            in_section = True
-            current_section = section_name
-        elif line.startswith('【') and '】' in line:
-            # Section label line like 【任务】
-            section_name = line.strip().lstrip('【').rstrip('】')
-            emoji = section_emoji.get(section_name, '📌')
-            lines.append(f"{emoji} **{section_name}**")
-        elif line.startswith('- ') or line.startswith('• '):
-            lines.append(line)
-        elif line.strip() and in_section:
-            lines.append(line)
-        elif line.strip() and not in_section:
-            lines.append(line)
-        else:
-            if line.strip() == '' and in_section:
-                pass  # skip blank within section
-            else:
+        for line in template.split('\n'):
+            if line.startswith('## '):
+                section_name = line.replace('## ', '').strip()
+                emoji = section_emoji.get(section_name, '📌')
+                lines.append(f"\n{emoji} {section_name}")
+            elif line.startswith('【') and '】' in line:
+                section_name = line.strip().lstrip('【').rstrip('】')
+                emoji = section_emoji.get(section_name, '📌')
+                lines.append(f"{emoji} **{section_name}**")
+            elif line.strip():
                 lines.append(line)
 
-    lines.append("")
-    lines.append(sep)
+        lines.append("")
+        lines.append(sep)
 
     return "\n".join(lines)
 
+def _console_version_block(console, version: dict, evaluation: dict, recommended: bool):
+    """Print a single version block to rich console."""
+    vtype = version.get('type', '')
+    vdesc = version.get('description', '')
+    template = version.get('template', '')
+    scores = evaluation.get('scores', {})
+    overall = evaluation.get('overall', 0)
+    grade = evaluation.get('grade', '')
+    marker = " ✅ 推荐" if recommended else ""
+
+    sep = '═' * 50
+    console.print(f"[bold cyan]{sep}[/]")
+    vtype_line = f"[bold]📋 {vtype}{marker}[/bold]  [dim]{vdesc}[/dim]"
+    console.print(vtype_line)
+    score_line = (f"   评分：{overall}/10 ({grade}) · "
+                  f"清晰度 {scores.get('clarity', 0)} · "
+                  f"具体性 {scores.get('specificity', 0)} · "
+                  f"完整性 {scores.get('completeness', 0)}")
+    console.print(f"[yellow]{score_line}[/yellow]")
+
+    section_emoji = {
+        '任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
+        '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
+        '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
+        '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
+        '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅',
+        '邮件结构': '📧', '语气要求': '✍️', '参考模板': '✅',
+        '进阶要点': '🔍', '高级技巧': '💡',
+    }
+
+    current = []
+    for line in template.split('\n'):
+        if line.startswith('## ') or (line.startswith('【') and '】' in line):
+            if current:
+                for ln in current:
+                    if ln.strip():
+                        console.print(f"  {ln}")
+                console.print()
+            section_name = line.replace('## ', '').replace('【', '').replace('】', '').strip()
+            emoji = section_emoji.get(section_name, '📌')
+            console.print(f"[bold]{emoji} {section_name}[/bold]")
+            current = []
+        else:
+            current.append(line)
+    for ln in current:
+        if ln.strip():
+            console.print(f"  {ln}")
+    console.print()
+
+
 def format_rich(result: OptimizationResult, show_all: bool = True) -> str:
-    """Format with rich (for terminal) — stunning version."""
+    """Format with rich (for terminal) — stunning version with A/B/C support."""
     if not HAS_RICH:
         return format_markdown(result, show_all)
 
@@ -141,71 +218,63 @@ def format_rich(result: OptimizationResult, show_all: bool = True) -> str:
     buffer = StringIO()
     console = Console(file=buffer, force_terminal=True, width=100)
 
-    rv = result["recommended_version"]
-    re = result["recommended_evaluation"]
-    e = re
-    scores = e['scores']
+    versions = result.get('versions', [])
+    evaluations = result.get('evaluations', [])
+    recommended_idx = result.get('recommended_idx', 0)
 
     sep = '━' * 49
-
-    # Title block
     console.print(f"[bold cyan]{sep}[/]")
     console.print(f"[bold cyan]✨ 优化后的编程指令[/]")
     console.print(f"[bold cyan]{sep}[/]")
     console.print()
 
-    # Score line
-    score_line = (f"综合 {e['overall']}/10 · 清晰度 {scores['clarity']} · "
-                  f"具体性 {scores['specificity']} · 完整性 {scores['completeness']}")
-    console.print(f"[yellow]{score_line}[/yellow]")
-    console.print()
-
-    # Parse template into structured sections
-    template = rv['template']
-    section_emoji = {
-        '任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
-        '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
-        '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
-        '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
-        '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅',
-    }
-
-    # Split into sections
-    section_lines = []
-    current = []
-    for line in template.split('\n'):
-        if line.startswith('## ') or (line.startswith('【') and '】' in line):
-            if current:
-                section_lines.append(('block', current))
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        section_lines.append(('block', current))
-
-    for _tag, lines_block in section_lines:
-        first = lines_block[0]
-        if first.startswith('## '):
-            section_name = first.replace('## ', '').strip()
-            emoji = section_emoji.get(section_name, '📌')
-            console.print(f"[bold]{emoji} {section_name}[/bold]")
-            for ln in lines_block[1:]:
-                if ln.strip():
-                    console.print(f"  {ln}")
-        elif first.startswith('【'):
-            section_name = first.strip().lstrip('【').rstrip('】')
-            emoji = section_emoji.get(section_name, '📌')
-            console.print(f"[bold]{emoji} {section_name}[/bold]")
-            for ln in lines_block[1:]:
-                if ln.strip():
-                    console.print(f"  {ln}")
-        else:
-            for ln in lines_block:
-                if ln.strip():
-                    console.print(f"  {ln}")
+    if show_all and len(versions) > 1:
+        for i, (version, evaluation) in enumerate(zip(versions, evaluations)):
+            _console_version_block(
+                console, version, evaluation,
+                recommended=(i == recommended_idx)
+            )
+        console.print(f"[bold cyan]{sep}[/]")
+    else:
+        rv = result["recommended_version"]
+        re_ = result["recommended_evaluation"]
+        scores = re_['scores']
+        score_line = (f"综合 {re_['overall']}/10 · 清晰度 {scores['clarity']} · "
+                      f"具体性 {scores['specificity']} · 完整性 {scores['completeness']}  ✅ 推荐")
+        console.print(f"[yellow]{score_line}[/yellow]")
         console.print()
 
-    console.print(f"[bold cyan]{sep}[/]")
+        section_emoji = {
+            '任务': '🎯', '输入': '📥', '输出': '📤', '性能': '⚡',
+            '边界': '🛡️', '约束': '⚠️', '可选': '🔮', '背景': '📋',
+            '受眾': '👥', '受众': '👥', '写作目的': '🎯', '核心信息': '💬',
+            '风格': '🎨', '结构': '🏗️', '内容框架': '🗂️', '解释主题': '💡',
+            '受众画像': '👤', '解释深度': '🔬', '解释策略': '🧩', '检验理解': '✅',
+            '邮件结构': '📧', '语气要求': '✍️', '参考模板': '✅',
+        }
+
+        template = rv['template']
+        current = []
+        for line in template.split('\n'):
+            if line.startswith('## ') or (line.startswith('【') and '】' in line):
+                if current:
+                    for ln in current:
+                        if ln.strip():
+                            console.print(f"  {ln}")
+                    console.print()
+                section_name = line.replace('## ', '').replace('【', '').replace('】', '').strip()
+                emoji = section_emoji.get(section_name, '📌')
+                console.print(f"[bold]{emoji} {section_name}[/bold]")
+                current = []
+            else:
+                current.append(line)
+        for ln in current:
+            if ln.strip():
+                console.print(f"  {ln}")
+
+        console.print()
+        console.print(f"[bold cyan]{sep}[/]")
+
     return buffer.getvalue()
 
 def format_for_ai_tools(result: OptimizationResult) -> str:
