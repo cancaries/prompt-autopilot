@@ -35,35 +35,103 @@ DEFAULT_PREFERENCES = {
 # Category-Specific Generation Prompt Templates
 # =============================================================================
 
-CODE_GENERATION_PROMPT = '''你是编程专家。用户想要：{instruction}
+CODE_GENERATION_PROMPT = '''你是编程专家，擅长生成高质量的编程指令。
 
-生成一个优化的编程 prompt，包含：
-1. 明确的编程语言/框架
-2. 输入输出规范
-3. 关键约束条件
-4. 性能或安全要求（如有）
+【用户需求】
+{instruction}
 
-直接输出优化后的 prompt，不要解释。'''
+【判断标准】
+差 prompt："写个排序算法" → 太模糊，缺少上下文
+好 prompt："用 Python 实现快速排序，支持自定义比较函数，用于处理大量金融数据"
 
-WRITING_GENERATION_PROMPT = '''你是写作专家。用户想要：{instruction}
+【必须包含的要素】（全部需要）
+□ 编程语言/框架（必须明确，如 Python/JavaScript/Go）
+□ 输入规格（输入是什么？类型、格式、范围）
+□ 输出规格（输出是什么？类型、格式、示例）
+□ 核心逻辑要求（算法、数据结构、架构设计）
+□ 边界情况处理（空输入、异常值、大规模数据）
+□ 性能要求（时间/空间复杂度，如有）
+□ 安全要求（如有：输入校验、SQL注入防护等）
 
-生成一个优化的写作 prompt，包含：
-1. 受众是谁
-2. 语气/风格
-3. 核心要点/信息
-4. 格式/结构要求
+【禁止出现】
+× "写个XX功能" → 必须改为 "用X语言实现X，支持X场景"
+× 模糊的约束条件 → 必须量化（如 "支持100万条数据"）
+× 缺少错误处理的设计
 
-直接输出优化后的 prompt，不要解释。'''
+【输出格式】
+直接输出优化后的 prompt，包含以上所有要素，用自然段落组织，不要分点列举。'''
 
-EXPLANATION_GENERATION_PROMPT = '''你是一位老师。用户想要：{instruction}
+WRITING_GENERATION_PROMPT = '''你是写作专家，擅长生成清晰的写作指令。
 
-生成一个优化的解释性 prompt，包含：
-1. 核心概念的定义
-2. 生活中的类比/例子
-3. 关键要点
-4. 常见误解（如有）
+【用户需求】
+{instruction}
 
-直接输出优化后的 prompt，不要解释。'''
+【判断标准】
+差 prompt："写一封邮件" → 缺少对象、目的、语气
+好 prompt："写一封给投资人的项目进展邮件，汇报Q3业绩未达标，说明原因并提出下季度改进措施，语气专业但坦诚"
+
+【必须包含的要素】（全部需要）
+□ 受众是谁（投资人/客户/同事/上级？年龄/职位/背景）
+□ 写作目的（汇报/说服/道歉/通知/解释？）
+□ 核心信息（必须传达的3个要点）
+□ 语气风格（正式/亲切/严肃/轻松？中文还是英文？）
+□ 结构要求（总分总/清单/书信格式？）
+□ 字数/长度要求（如有）
+□ 禁止事项（不要提到XX，不要用XX语气）
+
+【禁止出现】
+× "写一封邮件" → 必须改为 "写一封给XX的，关于XX的邮件"
+× 模糊受众 → 必须明确（"技术人员" vs "CEO" 完全不同）
+× 缺少行动指引 → 邮件需要明确期望读者做什么
+
+【输出格式】
+直接输出优化后的 prompt，自然段落形式。'''
+
+EXPLANATION_GENERATION_PROMPT = '''你是一位老师，擅长用通俗易懂的方式解释复杂概念。
+
+【用户需求】
+{instruction}
+
+【判断标准】
+差 prompt："解释一下区块链" → 太宽泛，没有重点
+好 prompt："向没有技术背景的 30-40 岁职场人士解释区块链，用他们熟悉的银行转账做类比，重点讲清去中心化和不可篡改这两个核心特性"
+
+【必须包含的要素】（全部需要）
+□ 受众是谁（年龄、教育背景、技术敏感度）
+□ 解释深度（科普/专业/学术？）
+□ 核心概念（1-3个必须讲清楚的概念）
+□ 类比/生活场景（必须有一个身边的例子）
+□ 关键要点（3个以内，读完能记住的）
+□ 常见误解（1-2个，写在最后作为提醒）
+
+【禁止出现】
+× "解释XX是什么" → 必须改为 "向XX解释XX，重点是XX"
+× 过多专业术语 → 必须用通俗语言
+× 只讲what不讲why → 要解释原理
+
+【输出格式】
+直接输出优化后的 prompt，自然段落形式。'''
+
+GENERAL_GENERATION_PROMPT = '''你是指令优化专家。用户想要：{instruction}
+
+【判断标准】
+差 prompt："帮我处理这个" → 不知所云
+好 prompt：明确who、what、why、how
+
+【必须包含的要素】
+□ 执行者是谁（AI/人类？什么角色？）
+□ 具体要做什么（明确的动作和目标）
+□ 上下文/背景（为什么需要做这件事）
+□ 质量标准（什么样的结果算好？）
+□ 约束条件（不能做什么？有什么限制？）
+
+【禁止出现】
+× 模糊的动作描述 → 必须明确具体
+× 缺少上下文 → 说明为什么需要做这件事
+× 缺少成功标准 → 说明什么样的结果算好
+
+【输出格式】
+直接输出优化后的 prompt，自然段落形式。'''
 
 # =============================================================================
 # Types
@@ -933,11 +1001,11 @@ def generate_with_llm(instruction: str, api_key: str = None, model: str = "gpt-4
         system_prompt = "你是一个写作专家，擅长生成清晰的写作指令。"
         user_prompt = WRITING_GENERATION_PROMPT.format(instruction=instruction)
     elif instruction_type == "explanation":
-        system_prompt = "你是一位老师，擅长生成易懂的解释性指令。"
+        system_prompt = "你是一位老师，擅长用通俗易懂的方式解释复杂概念。"
         user_prompt = EXPLANATION_GENERATION_PROMPT.format(instruction=instruction)
     else:
-        system_prompt = "你是一个助手。"
-        user_prompt = f"优化这个指令：{instruction}"
+        system_prompt = "你是一个指令优化专家。"
+        user_prompt = GENERAL_GENERATION_PROMPT.format(instruction=instruction)
 
     try:
         response = requests.post(
