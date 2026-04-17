@@ -2,7 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-04-16
+## [Unreleased] - 2026-04-18
+
+### Fixed
+- **Bullet spacing**: Fixed missing space after dash in "-具体的输入/输出规格" → "- 具体的输入/输出规格" (affects all "指令信息不足" templates)
+- **T13 creative_writing**: Filled unfilled placeholder `视角：[第一人称/第三人称/上帝视角]` → `视角：第三人称`
+- **T14 academic_writing**: Filled unfilled placeholders `类型：[文献综述/研究摘要/...]` → `类型：文献综述` and `学术领域：[如 计算机科学/医学/...]` → `学术领域：计算机科学`
+- **Few-shot examples**: Replaced placeholder `# 正常用例 → 期望输出` with concrete examples `输入：列表 [5, 2, 8, 1, 9] → 输出：[1, 2, 5, 8, 9]` for generic code tasks
+
+## [1.0.2] - 2026-04-16
 
 ### Fixed
 - **P1**: Enable LLM inference fallback when rule-based template matching fails; add `_CODE_DEFAULTS` entries for JSON array (平均值) and square/power tasks

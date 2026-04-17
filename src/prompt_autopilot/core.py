@@ -870,7 +870,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 
 ### 🔧 优化后的 prompt 将包含
 - 清晰的任务描述
--具体的输入/输出规格
+- 具体的输入/输出规格
 - 边界情况处理
 - 质量标准"""
 
@@ -985,6 +985,86 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             else:
                 output_desc = '根据任务目标确定'
             
+            # Issue #6 fix: if both input and output are generic placeholders,
+            # the instruction is too vague - return "指令信息不足" warning
+            input_desc = defaults.get('input', '由调用方提供')
+            # Generic input patterns - contain "由调用方", "具体输入", "类型和数据范围", etc.
+            GENERIC_INPUT_PATTERNS = [
+                '由调用方提供', '由调用方指定',
+                '类型和数据范围（根据任务描述推断）',
+                '具体输入示例', '具体输入',
+                'Input type and format (inferred from task)',
+                'Concrete input example',
+                '函数参数（类型和含义由调用方指定）',
+                '函数参数（',  # generic function parameter description
+            ]
+            # Generic output patterns - contain "根据任务目标", "任务目标", "对应输出", etc.
+            GENERIC_OUTPUT_PATTERNS = [
+                '根据任务目标确定', '任务目标的处理结果',
+                '对应输出示例', '根据处理需求确定',
+                'Expected output based on task goal',
+                'Corresponding output example',
+                '函数返回值（类型和含义由调用方指定）',
+                '函数返回值（',  # generic function return description
+            ]
+            is_input_generic = any(p in input_desc for p in GENERIC_INPUT_PATTERNS)
+            is_output_generic = any(p in output_desc for p in GENERIC_OUTPUT_PATTERNS)
+            if is_input_generic and is_output_generic:
+                if lang == 'zh':
+                    return f"""## ⚠️ 指令信息不足
+
+您的指令「{stripped}」信息不足，无法生成有针对性的优化 prompt。
+
+### 💡 请补充更多信息
+
+建议包括：
+- **任务目标**：想要实现什么？
+- **具体场景**：在什么情况下使用？
+- **输入数据**：输入是什么格式？有哪些字段？
+- **输出结果**：期望输出什么？
+- **技术要求**：有什么特殊约束吗？
+
+### 📝 示例
+
+| 简短 ❌ | 详细 ✅ |
+|--------|--------|
+| 写一个函数 | 用 Python 写一个函数，接收用户名列表，返回最长的用户名 |
+| LRU 缓存 | 用 Python 实现 LRU 缓存，容量 100，支持 get/put 操作，O(1) 时间复杂度 |
+| 游戏脚本 | 用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制 |
+
+### 🔧 优化后的 prompt 将包含
+- 清晰的任务描述
+- 具体的输入/输出规格
+- 边界情况处理
+- 质量标准"""
+                else:
+                    return f"""## ⚠️ Insufficient Instruction Information
+
+Your instruction "{stripped}" lacks sufficient detail to generate a targeted optimized prompt.
+
+### 💡 Please provide more information
+
+Consider including:
+- **Task goal**: What do you want to implement?
+- **Specific scenario**: In what context will it be used?
+- **Input data**: What format is the input? What fields?
+- **Expected output**: What should the output look like?
+- **Technical requirements**: Any specific constraints?
+
+### 📝 Examples
+
+| Vague ❌ | Specific ✅ |
+|----------|-------------|
+| write a function | Write a Python function that receives a list of usernames and returns the longest one |
+| LRU cache | Implement an LRU cache in Python with capacity 100, supporting get/put operations with O(1) time complexity |
+| game script | Write a Snake game using Python + Pygame with arrow key controls |
+
+### 🔧 An optimized prompt will include
+- Clear task description
+- Specific input/output specifications
+- Boundary condition handling
+- Quality standards"""
+            
             return f"""## 🎯 任务
 用 {lang_default} 实现：{stripped}
 
@@ -999,66 +1079,62 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 
 ## 🛡️ 边界情况
 {boundary}"""
+        # Issue #6 fix: if _infer_code_defaults returned None or both input/output
+        # are generic placeholders, the instruction is too vague - return warning
+        if lang == 'zh':
+            return f"""## ⚠️ 指令信息不足
+
+您的指令「{stripped}」信息不足，无法生成有针对性的优化 prompt。
+
+### 💡 请补充更多信息
+
+建议包括：
+- **任务目标**：想要实现什么？
+- **具体场景**：在什么情况下使用？
+- **输入数据**：输入是什么格式？有哪些字段？
+- **输出结果**：期望输出什么？
+- **技术要求**：有什么特殊约束吗？
+
+### 📝 示例
+
+| 简短 ❌ | 详细 ✅ |
+|--------|--------|
+| 写一个函数 | 用 Python 写一个函数，接收用户名列表，返回最长的用户名 |
+| LRU 缓存 | 用 Python 实现 LRU 缓存，容量 100，支持 get/put 操作，O(1) 时间复杂度 |
+| 游戏脚本 | 用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制 |
+
+### 🔧 优化后的 prompt 将包含
+- 清晰的任务描述
+- 具体的输入/输出规格
+- 边界情况处理
+- 质量标准"""
         else:
-            # Smart generic fallback: infer as much as possible from the instruction
-            instr_lower = stripped.lower()
-            
-            # Detect language from instruction for placeholder language
-            if lang == "zh":
-                ph_input = "类型和数据范围（根据任务描述推断）"
-                ph_output = "任务目标的处理结果"
-                ph_example_in = "具体输入示例"
-                ph_example_out = "对应输出示例"
-                ph_time = "如有要求请注明（如 O(n)）"
-                ph_space = "如有要求请注明（如 O(1)）"
-                ph_empty = "空输入 → 如何处理"
-                ph_abnormal = "异常值 → 如何处理"
-                lang_default = "Python"
-            else:
-                ph_input = "Input type and format (inferred from task)"
-                ph_output = "Expected output based on task goal"
-                ph_example_in = "Concrete input example"
-                ph_example_out = "Corresponding output example"
-                ph_time = "If required, e.g., O(n)"
-                ph_space = "If required, e.g., O(1)"
-                ph_empty = "Empty input → how to handle"
-                ph_abnormal = "Abnormal values → how to handle"
-                lang_default = "Python"
-            
-            # Try to infer language from instruction keywords
-            if any(w in instr_lower for w in ["python", "py"]):
-                lang_default = "Python"
-            elif any(w in instr_lower for w in ["javascript", "js", "node"]):
-                lang_default = "JavaScript (Node.js)"
-            elif any(w in instr_lower for w in ["java", "java语言"]):
-                lang_default = "Java"
-            elif "go " in instr_lower or instr_lower.startswith("go ") or instr_lower == "go":
-                lang_default = "Go"
-            elif any(w in instr_lower for w in ["rust", "rs"]):
-                lang_default = "Rust"
-            elif any(w in instr_lower for w in ["c++", "cpp"]):
-                lang_default = "C++"
-            elif any(w in instr_lower for w in ["sql", "数据库", "db"]):
-                lang_default = "SQL"
-            
-            return f"""## 🎯 任务
-用 {lang_default} 实现：{stripped}
+            return f"""## ⚠️ Insufficient Instruction Information
 
-## 📥 输入
-- {ph_input}
-- 示例：{ph_example_in}
+Your instruction "{stripped}" lacks sufficient detail to generate a targeted optimized prompt.
 
-## 📤 输出
-- {ph_output}
-- 示例：{ph_example_out}
+### 💡 Please provide more information
 
-## ⚡ 性能要求
-- 时间复杂度：{ph_time}
-- 空间复杂度：{ph_space}
+Consider including:
+- **Task goal**: What do you want to implement?
+- **Specific scenario**: In what context will it be used?
+- **Input data**: What format is the input? What fields?
+- **Expected output**: What should the output look like?
+- **Technical requirements**: Any specific constraints?
 
-## 🛡️ 边界情况
-- {ph_empty}
-- {ph_abnormal}"""
+### 📝 Examples
+
+| Vague ❌ | Specific ✅ |
+|----------|-------------|
+| write a function | Write a Python function that receives a list of usernames and returns the longest one |
+| LRU cache | Implement an LRU cache in Python with capacity 100, supporting get/put operations with O(1) time complexity |
+| game script | Write a Snake game using Python + Pygame with arrow key controls |
+
+### 🔧 An optimized prompt will include
+- Clear task description
+- Specific input/output specifications
+- Boundary condition handling
+- Quality standards"""
 
     # Email types
     if instruction_type == "rejection_email":
@@ -1156,7 +1232,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 ## 📖 题材与形式
 - 类型：[小说/散文/短篇/科幻/奇幻/悬疑/剧本]
 - 风格：{info['style']}
-- 视角：[第一人称/第三人称/上帝视角]
+- 视角：第三人称
 
 ## 👥 目标读者
 - 受众群体：{info['audience']}
@@ -1177,8 +1253,8 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 {stripped}
 
 ## 📄 文章类型
-- 类型：[文献综述/研究摘要/会议论文/期刊文章]
-- 学术领域：[如 计算机科学/医学/经济学]
+- 类型：文献综述
+- 学术领域：计算机科学
 
 ## 📋 摘要结构
 1. **背景**（该领域现状和研究空白）
@@ -1269,8 +1345,8 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
             examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
             examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
         else:
-            examples.append("# 正常用例 → 期望输出")
-            examples.append("# 边界用例 → 期望输出")
+            examples.append("输入：列表 [5, 2, 8, 1, 9] → 输出：[1, 2, 5, 8, 9]")
+            examples.append("输入：空列表 [] → 输出：[]")
 
     elif instr_type == "explanation":
         recommendations.append("- Role：扮演耐心的老师")
