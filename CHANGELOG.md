@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-04-18
 
 ### Fixed
+- **T10 Few-shot mismatch**: Fixed JSON/数组 few-shot examples that incorrectly showed averaging (e.g. `[1, 2, 3, 4] → 2.5（平均值）`) — same as T11. Now shows generic JSON-processing examples: field extraction and JSON validation.
 - **Bullet spacing**: Fixed missing space after dash in "-具体的输入/输出规格" → "- 具体的输入/输出规格" (affects all "指令信息不足" templates)
 - **T13 creative_writing**: Filled unfilled placeholder `视角：[第一人称/第三人称/上帝视角]` → `视角：第三人称`
 - **T14 academic_writing**: Filled unfilled placeholders `类型：[文献综述/研究摘要/...]` → `类型：文献综述` and `学术领域：[如 计算机科学/医学/...]` → `学术领域：计算机科学`

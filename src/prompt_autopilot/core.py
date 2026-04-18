@@ -1344,9 +1344,35 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
             examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
             examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
+        elif any(kw in instruction.lower() for kw in ('斐波那契', 'fibonacci')):
+            examples.append("输入：n=0 → 输出：0")
+            examples.append("输入：n=6 → 输出：8")
+        elif any(kw in instruction.lower() for kw in ('平方', 'square', '幂', 'power')):
+            examples.append("输入：3 → 输出：9")
+            examples.append("输入：[1, 2, 3] → 输出：[1, 4, 9]")
+        elif any(kw in instruction.lower() for kw in ('json', '数组', 'list')):
+            # T10: generic JSON/array processing — NOT averaging (that's T11)
+            examples.append("输入：{\"name\": \"Alice\", \"age\": 30} → 输出：提取 name 字段 → \"Alice\"")
+            examples.append("输入：[1, \"hello\", {\"a\": 1}] → 输出：验证 JSON 格式合法 → True")
+        elif any(kw in instruction.lower() for kw in ('lru', 'cache', '缓存')):
+            examples.append("输入：set(1,'a'), get(1), set(2,'b') → 输出：'a', None（key=2未命中）")
+            examples.append("输入：capacity=2, set(1,'x'), set(2,'y'), set(3,'z') → 输出：key=1被淘汰")
+        elif any(kw in instruction.lower() for kw in ('游戏', 'game', '脚本', 'script')):
+            examples.append("输入：蛇游戏 初始方向→右 → 输出：蛇头坐标+1")
+            examples.append("输入：2048 合并相同数字 → 输出：棋盘状态更新")
+        elif any(kw in instruction.lower() for kw in ('二分', 'binary search')):
+            examples.append("输入：[1,3,5,7,9], target=7 → 输出：3（下标）")
+            examples.append("输入：[1,3,5,7,9], target=4 → 输出：-1（不存在）")
+        elif any(kw in instruction.lower() for kw in ('api', 'rest', '接口', 'endpoint')):
+            examples.append("输入：GET /users/1 → 输出：{code:0, data:{id:1,name:'alice'}}")
+            examples.append("输入：POST /users {name:'bob'} → 输出：{code:0, data:{id:2}}")
+        elif any(kw in instruction.lower() for kw in ('dp', '动态规划', '爬楼梯')):
+            examples.append("输入：n=5 → 输出：8（爬楼梯方法数）")
+            examples.append("输入：n=0 → 输出：1（边界）")
         else:
-            examples.append("输入：列表 [5, 2, 8, 1, 9] → 输出：[1, 2, 5, 8, 9]")
-            examples.append("输入：空列表 [] → 输出：[]")
+            # Generic fallback: use a neutral non-sorting example
+            examples.append("输入：给定任务需求 → 输出：完整实现代码")
+            examples.append("输入：边界情况 → 输出：健壮处理结果")
 
     elif instr_type == "explanation":
         recommendations.append("- Role：扮演耐心的老师")
