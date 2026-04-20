@@ -915,8 +915,18 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - 质量标准"""
 
     if instruction_type == "code_review":
+        # Normalize mixed-language instructions: e.g., "review这段React代码" → "审查这段React代码"
+        normalized = stripped
+        if normalized.lower().startswith("review"):
+            # Handle mixed Chinese + English: replace leading "review" with Chinese "审查"
+            after_review = normalized[6:].strip()  # Strip "review" (6 chars)
+            normalized = f"审查{after_review}"
+        elif "review" in normalized.lower() and any('\u4e00' <= c <= '\u9fff' for c in normalized):
+            # Mixed: has both "review" keyword and Chinese chars
+            import re
+            normalized = re.sub(r'review', '审查', normalized, flags=re.IGNORECASE)
         return f"""## 🎯 任务
-审查以下代码：{stripped}
+{normalized}
 
 ## 🔍 待审查代码
 [请提供代码，或描述代码所在模块/功能]
@@ -1390,8 +1400,13 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         elif any(kw in instruction.lower() for kw in ('平方', 'square', '幂', 'power')):
             examples.append("输入：3 → 输出：9")
             examples.append("输入：[1, 2, 3] → 输出：[1, 4, 9]")
+        elif any(kw in instruction.lower() for kw in ('平均', 'average', 'mean')):
+            # T11: JSON array averaging — specific to numeric array statistics
+            examples.append("输入：[1, 2, 3, 4, 5] → 输出：3.00")
+            examples.append("输入：[10, 20, 30] → 输出：20.00")
+            examples.append("输入：[5.5, 6.5, 7.5] → 输出：6.50")
         elif any(kw in instruction.lower() for kw in ('json', '数组', 'list')):
-            # T10: generic JSON/array processing — NOT averaging (that's T11)
+            # T10: generic JSON/array processing — NOT averaging (averaging is T11)
             examples.append("输入：{\"name\": \"Alice\", \"age\": 30} → 输出：提取 name 字段 → \"Alice\"")
             examples.append("输入：[1, \"hello\", {\"a\": 1}] → 输出：验证 JSON 格式合法 → True")
         elif any(kw in instruction.lower() for kw in ('lru', 'cache', '缓存')):
