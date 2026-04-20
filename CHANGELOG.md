@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-04-18
+## [Unreleased] - 2026-04-20
 
 ### Fixed
 - **T10 Few-shot mismatch**: Fixed JSON/数组 few-shot examples that incorrectly showed averaging (e.g. `[1, 2, 3, 4] → 2.5（平均值）`) — same as T11. Now shows generic JSON-processing examples: field extraction and JSON validation.
@@ -10,6 +10,10 @@ All notable changes to this project will be documented in this file.
 - **T13 creative_writing**: Filled unfilled placeholder `视角：[第一人称/第三人称/上帝视角]` → `视角：第三人称`
 - **T14 academic_writing**: Filled unfilled placeholders `类型：[文献综述/研究摘要/...]` → `类型：文献综述` and `学术领域：[如 计算机科学/医学/...]` → `学术领域：计算机科学`
 - **Few-shot examples**: Replaced placeholder `# 正常用例 → 期望输出` with concrete examples `输入：列表 [5, 2, 8, 1, 9] → 输出：[1, 2, 5, 8, 9]` for generic code tasks
+- **P1-A (Few-shot generic placeholders)**: Replaced generic `"输入：给定任务需求 → 输出：完整实现代码"` with concrete examples per keyword type (SQL/function/user data). Affects T2, T8, T18, T19, T20.
+- **P1-B (Language confusion)**: Fixed `_extract_info()` to use `detect_language()` instead of hardcoded `"中文"`. English instructions (e.g. `write a blog post about AI`) now correctly output `"语言：英文"`. Affects T4, T7.
+- **P2 (Audience field)**: Fixed `_extract_info()` to infer audience from genre keywords (e.g. `"科幻"` → `"科幻小说读者"`) and `_extract_core_concept()` instead of embedding full instruction. Affects T15, T16, T27.
+- **P3 (Boundary description)**: Fixed `"空数组返回 0 或空列表"` → `"空数组应返回 None（因为平均值对空集无定义），调用方需自行处理空数组输入"`. Affects T10.
 
 ## [1.0.2] - 2026-04-16
 

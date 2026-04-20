@@ -649,7 +649,7 @@ _CODE_DEFAULTS = {
         "input": "JSON 数组或 Python 列表",
         "output": "数值（平均值）",
         "constraints": "时间复杂度 O(n)，空间复杂度 O(1)",
-        "boundary": "空数组返回 0 或空列表",
+        "boundary": "空数组应返回 None（因为平均值对空集无定义），调用方需自行处理空数组输入",
     },
     ("平方", "square", "幂", "power"): {
         "lang": "Python",
@@ -734,7 +734,7 @@ def _infer_code_defaults(instruction: str) -> dict | None:
     return None
 
 
-def _extract_info(instruction: str) -> dict:
+def _extract_info(instruction: str, instruction_type: str = None) -> dict:
     """Extract useful info from instruction for template filling."""
     info = {
         "topic": None,
@@ -748,6 +748,14 @@ def _extract_info(instruction: str) -> dict:
     }
     inst_stripped = _strip_emoji(instruction)
     inst_lower = inst_stripped.lower()
+
+    # P1-B fix: detect language properly using detect_language(), not hardcoded "中文"
+    detected_lang = detect_language(instruction)
+    if detected_lang == "en":
+        info["language"] = "英文"
+    elif detected_lang == "mixed":
+        info["language"] = "中英双语"
+    # else: keep "中文" default
 
     topic_keywords = {
         "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
@@ -789,7 +797,39 @@ def _extract_info(instruction: str) -> dict:
     elif any(w in inst_lower for w in ["学生", "小白", "入门"]):
         info["audience"] = "初学者/学生"
     else:
-        info["audience"] = f"一般读者，对{info['topic']}有基本了解"
+        # P2 fix: use smarter audience extraction instead of embedding full instruction
+        # For creative_writing, check genre FIRST (before _extract_core_concept)
+        if instruction_type == "creative_writing":
+            genre_audiences = {
+                "科幻": "科幻小说读者", "奇幻": "奇幻文学读者",
+                "悬疑": "悬疑小说爱好者", "推理": "推理小说爱好者",
+                "爱情": "爱情小说读者", "武侠": "武侠小说爱好者",
+                "短篇": "短篇小说读者", "长篇": "长篇小说读者",
+                "散文": "散文爱好者", "诗歌": "诗歌爱好者",
+                "剧本": "戏剧/影视从业者",
+            }
+            for kw, aud in genre_audiences.items():
+                if kw in inst_lower:
+                    info["audience"] = aud
+                    break
+            else:
+                # No genre keyword found, try _extract_core_concept
+                core = _extract_core_concept(instruction)
+                if core and core != instruction.strip() and len(core) < len(instruction.strip()):
+                    info["audience"] = f"{core}爱好者"
+                else:
+                    info["audience"] = f"一般读者，对{info['topic']}有基本了解"
+        else:
+            core = _extract_core_concept(instruction)
+            if core and core != instruction.strip() and len(core) < len(instruction.strip()):
+                if instruction_type == "academic_writing":
+                    info["audience"] = f"{core}领域的研究人员"
+                elif instruction_type == "writing":
+                    info["audience"] = f"一般读者，对{core}有兴趣"
+                else:
+                    info["audience"] = f"一般读者，对{core}有基本了解"
+            else:
+                info["audience"] = f"一般读者，对{info['topic']}有基本了解"
 
     if any(w in inst_lower for w in ["博客", "文章", "帖子", "公众号"]):
         info["format"] = "博客文章"
@@ -1225,7 +1265,7 @@ Consider including:
 - 简洁"""
 
     if instruction_type == "creative_writing":
-        info = _extract_info(stripped)
+        info = _extract_info(stripped, instruction_type)
         return f"""## 🎯 创作任务
 {stripped}
 
@@ -1248,7 +1288,7 @@ Consider including:
 - 语言：{info['language']}"""
 
     if instruction_type == "academic_writing":
-        info = _extract_info(stripped)
+        info = _extract_info(stripped, instruction_type)
         return f"""## 🎯 学术写作任务
 {stripped}
 
@@ -1268,7 +1308,7 @@ Consider including:
 - 语气：学术严谨、客观"""
 
     if instruction_type == "writing":
-        info = _extract_info(stripped)
+        info = _extract_info(stripped, instruction_type)
         return f"""## 🎯 写作任务
 {stripped}
 
@@ -1291,7 +1331,7 @@ Consider including:
 - 结尾：总结要点，行动引导"""
 
     if instruction_type == "explanation":
-        info = _extract_info(stripped)
+        info = _extract_info(stripped, instruction_type)
         core_concept = _extract_core_concept(stripped)
         return f"""## 🎯 解释任务
 {stripped}
@@ -1370,9 +1410,21 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
             examples.append("输入：n=5 → 输出：8（爬楼梯方法数）")
             examples.append("输入：n=0 → 输出：1（边界）")
         else:
-            # Generic fallback: use a neutral non-sorting example
-            examples.append("输入：给定任务需求 → 输出：完整实现代码")
-            examples.append("输入：边界情况 → 输出：健壮处理结果")
+            # P1-A fix: provide meaningful examples based on code keywords, not generic placeholders
+            instr_lower = instruction.lower()
+            if any(kw in instr_lower for kw in ('sql', '数据库', 'db', 'database', 'select', 'insert', 'update', 'delete')):
+                examples.append("输入：SELECT * FROM users WHERE id = 1 → 输出：用户 alice 的完整信息")
+                examples.append("输入：INSERT INTO orders VALUES (1, 'item', 100) → 输出：插入成功，返回订单ID")
+            elif any(kw in instr_lower for kw in ('function', '函数', 'method', '方法', 'procedure')):
+                examples.append("输入：[1, 2, 3] → 输出：[1, 3]（过滤偶数）")
+                examples.append("输入：'hello world' → 输出：'HELLO WORLD'（转大写）")
+            elif any(kw in instr_lower for kw in ('user', 'data', '数据', '处理', 'process')):
+                examples.append("输入：{'name': 'alice', 'age': 30} → 输出：验证必填字段存在 → True")
+                examples.append("输入：{'email': 'bad'} → 输出：格式校验失败 → {'error': 'invalid email'}")
+            else:
+                # Generic fallback with concrete IO format
+                examples.append("输入：[1, 2, 3] → 输出：[1, 3]（过滤偶数）")
+                examples.append("输入：'hello' → 输出：'HELLO'（转大写）")
 
     elif instr_type == "explanation":
         recommendations.append("- Role：扮演耐心的老师")
