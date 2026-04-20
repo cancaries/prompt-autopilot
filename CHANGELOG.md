@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-04-20
+## [Unreleased] - 2026-04-21
 
 ### Fixed
+- **T11 (P0) few-shot mismatch**: Input `写一个Python函数接收JSON数组返回平均值保留2位小数` now shows averaging-specific few-shot examples (`[1, 2, 3, 4, 5] → 3.00`) instead of unrelated JSON field extraction. Root cause: static shared template not differentiated by task.
+- **T10/T11 (P1) shared few-shot**: T10 and T11 now have distinct few-shot examples. T10 → JSON field extraction/validation. T11 → numeric array statistics (average, sum, min/max).
+- **T27 (P2) mixed language**: `review这段React代码的性能问题` now normalizes to consistent Chinese `审查这段React代码的性能问题` instead of embedding English `review` in Chinese sentence.
 - **T10 Few-shot mismatch**: Fixed JSON/数组 few-shot examples that incorrectly showed averaging (e.g. `[1, 2, 3, 4] → 2.5（平均值）`) — same as T11. Now shows generic JSON-processing examples: field extraction and JSON validation.
 - **Bullet spacing**: Fixed missing space after dash in "-具体的输入/输出规格" → "- 具体的输入/输出规格" (affects all "指令信息不足" templates)
 - **T13 creative_writing**: Filled unfilled placeholder `视角：[第一人称/第三人称/上帝视角]` → `视角：第三人称`
