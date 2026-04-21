@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-04-21
 
 ### Fixed
+- **T10 (P1) context pollution**: `_CODE_DEFAULTS` entry for `("json", "数组", "list")` had averaging-specific `output` and `boundary` ("数值（平均值）", "空数组应返回 None..."), which polluted T10 (generic JSON processing). Fixed by: (1) updating output to "处理后的 JSON 数据或验证结果" and boundary to "空数组返回空对象 {} 或空列表 []；空对象返回空对象 {}；非法 JSON 返回 None"; (2) adding dedicated `("平均", "average", "mean")` entry before generic JSON/array entry so T11 correctly gets averaging boundary. T10 and T11 boundaries now distinct.
 - **T11 (P0) few-shot mismatch**: Input `写一个Python函数接收JSON数组返回平均值保留2位小数` now shows averaging-specific few-shot examples (`[1, 2, 3, 4, 5] → 3.00`) instead of unrelated JSON field extraction. Root cause: static shared template not differentiated by task.
 - **T10/T11 (P1) shared few-shot**: T10 and T11 now have distinct few-shot examples. T10 → JSON field extraction/validation. T11 → numeric array statistics (average, sum, min/max).
 - **T27 (P2) mixed language**: `review这段React代码的性能问题` now normalizes to consistent Chinese `审查这段React代码的性能问题` instead of embedding English `review` in Chinese sentence.
