@@ -644,12 +644,21 @@ def _rule_based_analysis(instruction: str) -> AnalysisResult:
 
 # Code task inference map
 _CODE_DEFAULTS = {
-    ("json", "数组", "list"): {
+    # T11: numeric array statistics (average, sum, min/max) — must come before generic JSON/array
+    ("平均", "average", "mean"): {
         "lang": "Python",
         "input": "JSON 数组或 Python 列表",
         "output": "数值（平均值）",
         "constraints": "时间复杂度 O(n)，空间复杂度 O(1)",
         "boundary": "空数组应返回 None（因为平均值对空集无定义），调用方需自行处理空数组输入",
+    },
+    # T10: generic JSON/array processing — NOT averaging (averaging is T11 above)
+    ("json", "数组", "list"): {
+        "lang": "Python",
+        "input": "JSON 字符串或 Python 对象",
+        "output": "处理后的 JSON 数据或验证结果",
+        "constraints": "时间复杂度 O(n)，空间复杂度 O(n)",
+        "boundary": "空数组返回空对象 {} 或空列表 []；空对象返回空对象 {}；非法 JSON 返回 None",
     },
     ("平方", "square", "幂", "power"): {
         "lang": "Python",
