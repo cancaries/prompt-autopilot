@@ -1350,17 +1350,13 @@ Consider including:
 - 语气：学术严谨、客观
 
 ## 📖 Few-shot 示例
-**示例摘要1（机器学习在医学影像中的应用）**：
-背景：该领域研究现状... 
-方法：使用CNN模型对X光片进行分类...
-发现：模型达到95%准确率...
-结论：证明深度学习在医学影像中具有应用价值
+**示例摘要1（{info['topic']}）**：
+背景：该领域研究现状和研究空白...
+方法：描述使用的方法、数据集或实验设计...
+发现：量化描述主要结果...
+结论：意义、局限性和未来方向...
 
-**示例摘要2（区块链在供应链中的应用）**：
-背景：传统供应链存在信任问题...
-方法：采用Hyperledger Fabric构建去中心化系统...
-发现：交易处理速度提升3倍...
-结论：区块链可有效解决供应链信任问题"""
+*提示：参考上述结构，围绕 [{info['topic']}] 撰写摘要*"""
 
     if instruction_type == "writing":
         info = _extract_info(stripped, instruction_type)
@@ -1487,32 +1483,71 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
                 examples.append("输入：'hello' → 输出：'HELLO'（转大写）")
 
     elif instr_type == "explanation":
-        recommendations.append("- Role：扮演耐心的老师")
-        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解")
-        recommendations.append("- Few-shot：给1个理解过程的示例")
+        # Detect language for consistent example style
+        detected_lang = detect_language(instruction)
+        is_english = detected_lang == "en"
+        
+        recommendations.append("- Role：扮演耐心的老师" if not is_english else "- Role：Act as a patient teacher")
+        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解" if not is_english else "- Chain-of-Thought：Break down step by step")
+        recommendations.append("- Few-shot：给1个理解过程的示例" if not is_english else "- Few-shot：Give 1 example to illustrate the understanding process")
         # Issue #5 fix: Use topic-relevant analogies instead of generic ones
         instr_lower = instruction.lower()
-        if any(kw in instr_lower for kw in ["量子", "quantum", "纠缠", "entangle"]):
-            examples.append('类比：两个粒子无论相隔多远，一个动另一个同时动——像心灵感应的双胞胎')
-            examples.append('类比：想象两个人各拿一枚总是朝向相反的硬币')
+        if any(kw in instr_lower for kw in ["闭包", "closure", "python closure", "js closure"]):
+            if is_english:
+                examples.append('Code example: def outer(x): def inner(y): return x + y; return inner')
+                examples.append('Result: add5 = outer(5); add5(3) → 8 (inner remembers x=5)')
+            else:
+                examples.append('代码示例：def outer(x): def inner(y): return x + y; return inner')
+                examples.append('效果：add5 = outer(5); add5(3) → 8（inner函数记住了x=5）')
+        elif any(kw in instr_lower for kw in ["量子", "quantum", "纠缠", "entangle"]):
+            if is_english:
+                examples.append('Analogy: Two particles far apart affect each other instantly — like twins with telepathy')
+                examples.append('Analogy: Imagine two people holding coins that always face opposite directions')
+            else:
+                examples.append('类比：两个粒子无论相隔多远，一个动另一个同时动——像心灵感应的双胞胎')
+                examples.append('类比：想象两个人各拿一枚总是朝向相反的硬币')
         elif any(kw in instr_lower for kw in ["机器学习", "machine learning", "ml", "监督学习", "分类", "回归"]):
-            examples.append('类比：教小孩认识猫——给他看很多猫的照片，下次他就能认出猫了')
-            examples.append('类比：学生做题后看答案纠正思路，逐渐学会解题方法')
+            if is_english:
+                examples.append('Analogy: Teaching a child to recognize cats — show many cat photos, then they can identify cats')
+                examples.append('Analogy: Students solving problems then checking answers to correct their thinking')
+            else:
+                examples.append('类比：教小孩认识猫——给他看很多猫的照片，下次他就能认出猫了')
+                examples.append('类比：学生做题后看答案纠正思路，逐渐学会解题方法')
         elif any(kw in instr_lower for kw in ["区块链", "blockchain", "比特币", "bitcoin"]):
-            examples.append('类比：把"区块链去中心化"比作"村民共同记账"')
-            examples.append('类比：区块链像一本无法撕页、无法篡改的公共账本')
+            if is_english:
+                examples.append('Analogy: Blockchain decentralization is like villagers keeping shared accounts together')
+                examples.append('Analogy: Blockchain is like a public ledger that cannot be torn pages or tampered with')
+            else:
+                examples.append('类比：把"区块链去中心化"比作"村民共同记账"')
+                examples.append('类比：区块链像一本无法撕页、无法篡改的公共账本')
         elif any(kw in instr_lower for kw in ["数据库", "index", "索引", "database"]):
-            examples.append('类比：数据库索引就像书的目录，找内容不用翻完整本书')
-            examples.append('类比：图书馆索引柜告诉你书籍在哪个区域')
+            if is_english:
+                examples.append('Analogy: A database index is like a book\'s table of contents — find content without flipping the whole book')
+                examples.append('Analogy: Library index cards tell you which area the book is in')
+            else:
+                examples.append('类比：数据库索引就像书的目录，找内容不用翻完整本书')
+                examples.append('类比：图书馆索引柜告诉你书籍在哪个区域')
         elif any(kw in instr_lower for kw in ["api", "rest", "接口", "restful"]):
-            examples.append('类比：API 就像餐厅服务员——你告诉服务员要什么菜，他去厨房拿给你')
-            examples.append('类比：API 是软件之间的"对话窗口"，双方按约定格式交流')
+            if is_english:
+                examples.append('Analogy: An API is like a restaurant waiter — you tell them what dish you want, they bring it from the kitchen')
+                examples.append('Analogy: API is a "conversation window" between software, both sides communicate in agreed format')
+            else:
+                examples.append('类比：API 就像餐厅服务员——你告诉服务员要什么菜，他去厨房拿给你')
+                examples.append('类比：API 是软件之间的"对话窗口"，双方按约定格式交流')
         elif any(kw in instr_lower for kw in ["微服务", "microservice", "云计算", "cloud"]):
-            examples.append('类比：微服务就像分工明确的团队，每人做专长的事')
-            examples.append('类比：云计算像用电——不用自己发电，按需付费')
+            if is_english:
+                examples.append('Analogy: Microservices are like a team with clear division — each does what they specialize in')
+                examples.append('Analogy: Cloud computing is like electricity — no need to generate your own, pay per use')
+            else:
+                examples.append('类比：微服务就像分工明确的团队，每人做专长的事')
+                examples.append('类比：云计算像用电——不用自己发电，按需付费')
         else:
-            examples.append('类比：用生活中的例子说明，把复杂概念类比为熟悉的事物')
-            examples.append('类比：从已知到未知，按认知顺序逐步拆解')
+            if is_english:
+                examples.append('Analogy: Use everyday examples to illustrate complex concepts')
+                examples.append('Analogy: Progress from known to unknown, break down step by step')
+            else:
+                examples.append('类比：用生活中的例子说明，把复杂概念类比为熟悉的事物')
+                examples.append('类比：从已知到未知，按认知顺序逐步拆解')
 
     elif instr_type == "writing":
         recommendations.append("- Few-shot：给1篇范文参考")

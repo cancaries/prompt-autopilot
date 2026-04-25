@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-04-25
+## [Unreleased] - 2026-04-26
 
 ### Fixed
+- **问题1 (T16 content pollution)**: `academic_writing` in `generate_fallback_prompt()` had hardcoded Few-shot examples (machine learning in medical imaging + unrelated blockchain in supply chain). Now dynamically uses `info['topic']` for the first example and omits the second unrelated example.
+- **问题2 (T24 closure examples)**: `explanation` in `get_technique_recommendations()` gave generic method descriptions for technical concepts. Added specific code examples for "闭包/closure" keywords: `def outer(x): def inner(y): return x + y; return inner` with demonstration.
+- **问题3 (T7 language inconsistency)**: English explanation prompts like "explain how blockchain works" returned Chinese analogies. Added `detect_language()` check at the start of explanation block; now returns English analogies and recommendations when input is English.
 - **T4/T7 (Language mismatch)**: `_extract_info()` now returns English field values (audience, depth, style, tone, analogy, format) when input language is English. Previously only `info["language"]` was set to "英文" while other template fields remained hardcoded in Chinese. Now English input like `write a blog post about AI` outputs English audience fields like `general readers with basic knowledge of AI` instead of `一般读者，对AI有基本了解`.
 - **T16 (Few-shot missing)**: `academic_writing` branch in `generate_fallback_prompt` now includes a `📖 Few-shot 示例` section with two example abstracts (machine learning in medical imaging, blockchain in supply chain) to guide the output format.
 
