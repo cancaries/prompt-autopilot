@@ -766,6 +766,15 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
         info["language"] = "中英双语"
     # else: keep "中文" default
 
+    # T4/T7 fix: when input is English, switch all template fields to English
+    if detected_lang == "en":
+        info["depth"] = "beginner-friendly"
+        info["style"] = "accessible and clear"
+        info["audience"] = "general readers"
+        info["format"] = "article"
+        info["analogy"] = "use everyday examples"
+        info["tone"] = "accessible, suitable for general audiences"
+
     topic_keywords = {
         "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
         "区块链": "区块链", "比特币": "区块链",
@@ -798,18 +807,18 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
         info["style"] = "通俗易懂，有生活气息"
 
     if any(w in inst_lower for w in ["工程师", "developer", "程序员", "技术", "码农"]):
-        info["audience"] = "技术人员/工程师"
+        info["audience"] = "技术人员/工程师" if detected_lang != "en" else "developers/engineers"
     elif any(w in inst_lower for w in ["老板", "管理层", "manager", "高管"]):
-        info["audience"] = "管理层/决策者"
+        info["audience"] = "管理层/决策者" if detected_lang != "en" else "management/executives"
     elif any(w in inst_lower for w in ["客户"]):
-        info["audience"] = "客户"
+        info["audience"] = "客户" if detected_lang != "en" else "customers"
     elif any(w in inst_lower for w in ["学生", "小白", "入门"]):
-        info["audience"] = "初学者/学生"
+        info["audience"] = "初学者/学生" if detected_lang != "en" else "beginners/students"
     else:
         # P2 fix: use smarter audience extraction instead of embedding full instruction
         # For creative_writing, check genre FIRST (before _extract_core_concept)
         if instruction_type == "creative_writing":
-            genre_audiences = {
+            genre_audiences_zh = {
                 "科幻": "科幻小说读者", "奇幻": "奇幻文学读者",
                 "悬疑": "悬疑小说爱好者", "推理": "推理小说爱好者",
                 "爱情": "爱情小说读者", "武侠": "武侠小说爱好者",
@@ -817,6 +826,20 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
                 "散文": "散文爱好者", "诗歌": "诗歌爱好者",
                 "剧本": "戏剧/影视从业者",
             }
+            genre_audiences_en = {
+                "sci-fi": "sci-fi readers", "科幻": "sci-fi readers",
+                "fantasy": "fantasy readers", "奇幻": "fantasy readers",
+                "suspense": "suspense fiction fans", "悬疑": "suspense fiction fans",
+                "mystery": "mystery readers", "推理": "mystery readers",
+                "romance": "romance readers", "爱情": "romance readers",
+                "wuxia": "wuxia novel fans", "武侠": "wuxia novel fans",
+                "short story": "short story readers", "短篇": "short story readers",
+                "novel": "novel readers", "长篇": "novel readers",
+                "prose": "prose lovers", "散文": "prose lovers",
+                "poetry": "poetry lovers", "诗歌": "poetry lovers",
+                "screenplay": "screenwriters/drama professionals", "剧本": "screenwriters/drama professionals",
+            }
+            genre_audiences = genre_audiences_en if detected_lang == "en" else genre_audiences_zh
             for kw, aud in genre_audiences.items():
                 if kw in inst_lower:
                     info["audience"] = aud
@@ -825,20 +848,20 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
                 # No genre keyword found, try _extract_core_concept
                 core = _extract_core_concept(instruction)
                 if core and core != instruction.strip() and len(core) < len(instruction.strip()):
-                    info["audience"] = f"{core}爱好者"
+                    info["audience"] = f"{core}爱好者" if detected_lang != "en" else f"readers interested in {core}"
                 else:
-                    info["audience"] = f"一般读者，对{info['topic']}有基本了解"
+                    info["audience"] = f"一般读者，对{info['topic']}有基本了解" if detected_lang != "en" else f"general readers with basic knowledge of {info['topic']}"
         else:
             core = _extract_core_concept(instruction)
             if core and core != instruction.strip() and len(core) < len(instruction.strip()):
                 if instruction_type == "academic_writing":
-                    info["audience"] = f"{core}领域的研究人员"
+                    info["audience"] = f"{core}领域的研究人员" if detected_lang != "en" else f"researchers in the field of {core}"
                 elif instruction_type == "writing":
-                    info["audience"] = f"一般读者，对{core}有兴趣"
+                    info["audience"] = f"一般读者，对{core}有兴趣" if detected_lang != "en" else f"general readers interested in {core}"
                 else:
-                    info["audience"] = f"一般读者，对{core}有基本了解"
+                    info["audience"] = f"一般读者，对{core}有基本了解" if detected_lang != "en" else f"general readers with basic understanding of {core}"
             else:
-                info["audience"] = f"一般读者，对{info['topic']}有基本了解"
+                info["audience"] = f"一般读者，对{info['topic']}有基本了解" if detected_lang != "en" else f"general readers with basic knowledge of {info['topic']}"
 
     if any(w in inst_lower for w in ["博客", "文章", "帖子", "公众号"]):
         info["format"] = "博客文章"
@@ -1324,7 +1347,20 @@ Consider including:
 
 ## ✍️ 写作规范
 - 语言：{info['language']}
-- 语气：学术严谨、客观"""
+- 语气：学术严谨、客观
+
+## 📖 Few-shot 示例
+**示例摘要1（机器学习在医学影像中的应用）**：
+背景：该领域研究现状... 
+方法：使用CNN模型对X光片进行分类...
+发现：模型达到95%准确率...
+结论：证明深度学习在医学影像中具有应用价值
+
+**示例摘要2（区块链在供应链中的应用）**：
+背景：传统供应链存在信任问题...
+方法：采用Hyperledger Fabric构建去中心化系统...
+发现：交易处理速度提升3倍...
+结论：区块链可有效解决供应链信任问题"""
 
     if instruction_type == "writing":
         info = _extract_info(stripped, instruction_type)

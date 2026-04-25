@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-04-21
+## [Unreleased] - 2026-04-25
+
+### Fixed
+- **T4/T7 (Language mismatch)**: `_extract_info()` now returns English field values (audience, depth, style, tone, analogy, format) when input language is English. Previously only `info["language"]` was set to "英文" while other template fields remained hardcoded in Chinese. Now English input like `write a blog post about AI` outputs English audience fields like `general readers with basic knowledge of AI` instead of `一般读者，对AI有基本了解`.
+- **T16 (Few-shot missing)**: `academic_writing` branch in `generate_fallback_prompt` now includes a `📖 Few-shot 示例` section with two example abstracts (machine learning in medical imaging, blockchain in supply chain) to guide the output format.
 
 ### Fixed
 - **T10 (P1) context pollution**: `_CODE_DEFAULTS` entry for `("json", "数组", "list")` had averaging-specific `output` and `boundary` ("数值（平均值）", "空数组应返回 None..."), which polluted T10 (generic JSON processing). Fixed by: (1) updating output to "处理后的 JSON 数据或验证结果" and boundary to "空数组返回空对象 {} 或空列表 []；空对象返回空对象 {}；非法 JSON 返回 None"; (2) adding dedicated `("平均", "average", "mean")` entry before generic JSON/array entry so T11 correctly gets averaging boundary. T10 and T11 boundaries now distinct.
