@@ -775,21 +775,39 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
         info["analogy"] = "use everyday examples"
         info["tone"] = "accessible, suitable for general audiences"
 
-    topic_keywords = {
-        "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
-        "区块链": "区块链", "比特币": "区块链",
-        "Python": "Python", "Java": "Java", "Go": "Go",
-        "机器学习": "机器学习", "深度学习": "深度学习",
-        "大模型": "大模型", "LLM": "大语言模型",
-        "云计算": "云计算", "边缘计算": "边缘计算",
-        "物联网": "物联网", "5G": "5G",
-        "网络安全": "网络安全", "黑客": "网络安全",
-        "量子计算": "量子计算", "量子": "量子计算",
-    }
-    for kw, label in topic_keywords.items():
-        if kw in inst_lower or kw in inst_stripped:
-            info["topic"] = label
-            break
+    # T4 fix: use English topic labels when input is English
+    if detected_lang == "en":
+        topic_keywords_en = {
+            "AI": "AI", "artificial intelligence": "AI",
+            "blockchain": "blockchain", "比特币": "blockchain",
+            "Python": "Python", "Java": "Java", "Go": "Go",
+            "machine learning": "machine learning", "深度学习": "deep learning",
+            "large language model": "large language model", "LLM": "LLM",
+            "cloud computing": "cloud computing", "edge computing": "edge computing",
+            "internet of things": "IoT", "5G": "5G",
+            "cybersecurity": "cybersecurity", "黑客": "cybersecurity",
+            "quantum computing": "quantum computing", "量子": "quantum computing",
+        }
+        for kw, label in topic_keywords_en.items():
+            if kw in inst_lower or kw in inst_stripped:
+                info["topic"] = label
+                break
+    else:
+        topic_keywords = {
+            "AI": "AI（人工智能）", "人工智能": "AI（人工智能）",
+            "区块链": "区块链", "比特币": "区块链",
+            "Python": "Python", "Java": "Java", "Go": "Go",
+            "机器学习": "机器学习", "深度学习": "深度学习",
+            "大模型": "大模型", "LLM": "大语言模型",
+            "云计算": "云计算", "边缘计算": "边缘计算",
+            "物联网": "物联网", "5G": "5G",
+            "网络安全": "网络安全", "黑客": "网络安全",
+            "量子计算": "量子计算", "量子": "量子计算",
+        }
+        for kw, label in topic_keywords.items():
+            if kw in inst_lower or kw in inst_stripped:
+                info["topic"] = label
+                break
     if info["topic"] is None:
         words = inst_stripped.split()
         info["topic"] = " ".join(words[:5]) if len(words) > 3 else inst_stripped
@@ -1308,6 +1326,31 @@ Consider including:
 
     if instruction_type == "creative_writing":
         info = _extract_info(stripped, instruction_type)
+        # T15 fix: detect sci-fi genre and use appropriate style
+        stripped_lower = stripped.lower()
+        is_scifi = any(kw in stripped_lower for kw in ['科幻', 'sci-fi', 'science fiction', 'sci fi'])
+        if is_scifi:
+            # Sci-fi style: grand narrative, explore future, speculative
+            return f"""## 🎯 创作任务
+{stripped}
+
+## 📖 题材与形式
+- 类型：[小说/散文/短篇/科幻/奇幻/悬疑/剧本]
+- 风格：科幻小说风格：宏大叙事、探索未来、想象力丰富
+- 视角：第三人称
+
+## 👥 目标读者
+- 受众群体：{info['audience']}
+- 期待体验：读者感受到未来科技的震撼与思考
+
+## 🏗️ 结构要求
+- 开头：先声夺人，建立世界观
+- 发展：通过冲突/情节推进故事
+- 结尾：令人回味/出乎意料/留白
+
+## ✍️ 写作风格
+- 语气：科幻小说语气：宏大而细腻，理性与想象力并重
+- 语言：{info['language']}"""
         return f"""## 🎯 创作任务
 {stripped}
 
@@ -1360,6 +1403,28 @@ Consider including:
 
     if instruction_type == "writing":
         info = _extract_info(stripped, instruction_type)
+        # T4 fix: use English labels when input is English
+        if detect_language(stripped) == "en":
+            return f"""## 🎯 Writing Task
+{stripped}
+
+## 👥 Target Audience
+- Target Readers：{info['audience']}
+- What They Care About：Core value and applications of {info['topic']}
+
+## 🎯 Core Message
+- Main Points：Focus on {info['topic']}
+- Desired Action：Help readers understand and practically apply
+
+## 🎨 Style Requirements
+- Tone：{info['tone']}
+- Language：{info['language']}
+- Length：800-1500 words
+
+## 🏗️ Structure
+- Opening：Start with a question or phenomenon to engage
+- Body：Develop around key points
+- Closing：Summarize and guide action"""
         return f"""## 🎯 写作任务
 {stripped}
 
@@ -1384,6 +1449,26 @@ Consider including:
     if instruction_type == "explanation":
         info = _extract_info(stripped, instruction_type)
         core_concept = _extract_core_concept(stripped)
+        # T7 fix: use English labels when input is English
+        if detect_language(stripped) == "en":
+            return f"""## 🎯 Explanation Task
+{stripped}
+
+## 👤 Target Audience
+- Age/Profession：{info['audience']}
+- Technical Background：General readers with basic understanding of {core_concept}
+- What They Care About：What {core_concept} is, how it works, and its application scenarios
+
+## 🔬 Explanation Depth
+- Level：{info['depth']}
+- Core Concept：{core_concept} definition, principles, and application scenarios
+
+## 🧩 Explanation Strategy
+- Analogy：{info['analogy']}
+- Sequence：From known to unknown, step by step
+
+## ✅ Comprehension Check
+- After reading, readers should be able to answer：What is {core_concept}? What are its application scenarios?"""
         return f"""## 🎯 解释任务
 {stripped}
 
@@ -1425,62 +1510,116 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
     recommendations = []
     examples = []
 
+    # Detect language for consistent content
+    detected_lang = detect_language(instruction)
+    is_english = detected_lang == "en"
+
     if instr_type == "code":
-        recommendations.append("- Chain-of-Thought：先分析最优子结构再写")
-        recommendations.append("- Few-shot：给1-2个输入输出示例")
-        recommendations.append("- Role：扮演资深工程师")
+        if is_english:
+            recommendations.append("- Chain-of-Thought: Analyze optimal substructure before coding")
+            recommendations.append("- Few-shot: Provide 1-2 input/output examples")
+            recommendations.append("- Role: Act as a senior engineer")
+        else:
+            recommendations.append("- Chain-of-Thought：先分析最优子结构再写")
+            recommendations.append("- Few-shot：给1-2个输入输出示例")
+            recommendations.append("- Role：扮演资深工程师")
+        # T2/T8 fix: use English labels when input is English
+        if is_english:
+            inp, out = "Input", "Output"
+        else:
+            inp, out = "输入", "输出"
         if any(kw in instruction.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort')):
-            examples.append("输入：[3, 1, 2] → 输出：[1, 2, 3]")
-            examples.append("输入：[5, 2, 9, 1] → 输出：[1, 2, 5, 9]")
+            examples.append(f"{inp}：[3, 1, 2] → {out}：[1, 2, 3]")
+            examples.append(f"{inp}：[5, 2, 9, 1] → {out}：[1, 2, 5, 9]")
         elif any(kw in instruction.lower() for kw in ('登录', 'login', '登陆', 'auth')):
-            examples.append("输入：用户名=alice，密码=Pass1234 → 输出：JWT token")
-            examples.append("输入：用户名=unknown，密码=Pass1234 → 输出：用户不存在")
+            if is_english:
+                examples.append(f"{inp}：username=alice, password=Pass1234 → {out}：JWT token")
+                examples.append(f"{inp}：username=unknown, password=Pass1234 → {out}：user not found")
+            else:
+                examples.append(f"{inp}：用户名=alice，密码=Pass1234 → {out}：JWT token")
+                examples.append(f"{inp}：用户名=unknown，密码=Pass1234 → {out}：用户不存在")
         elif any(kw in instruction.lower() for kw in ('斐波那契', 'fibonacci')):
-            examples.append("输入：n=0 → 输出：0")
-            examples.append("输入：n=6 → 输出：8")
+            examples.append(f"{inp}：n=0 → {out}：0")
+            examples.append(f"{inp}：n=6 → {out}：8")
         elif any(kw in instruction.lower() for kw in ('平方', 'square', '幂', 'power')):
-            examples.append("输入：3 → 输出：9")
-            examples.append("输入：[1, 2, 3] → 输出：[1, 4, 9]")
+            examples.append(f"{inp}：3 → {out}：9")
+            examples.append(f"{inp}：[1, 2, 3] → {out}：[1, 4, 9]")
         elif any(kw in instruction.lower() for kw in ('平均', 'average', 'mean')):
             # T11: JSON array averaging — specific to numeric array statistics
-            examples.append("输入：[1, 2, 3, 4, 5] → 输出：3.00")
-            examples.append("输入：[10, 20, 30] → 输出：20.00")
-            examples.append("输入：[5.5, 6.5, 7.5] → 输出：6.50")
+            examples.append(f"{inp}：[1, 2, 3, 4, 5] → {out}：3.00")
+            examples.append(f"{inp}：[10, 20, 30] → {out}：20.00")
+            examples.append(f"{inp}：[5.5, 6.5, 7.5] → {out}：6.50")
         elif any(kw in instruction.lower() for kw in ('json', '数组', 'list')):
             # T10: generic JSON/array processing — NOT averaging (averaging is T11)
-            examples.append("输入：{\"name\": \"Alice\", \"age\": 30} → 输出：提取 name 字段 → \"Alice\"")
-            examples.append("输入：[1, \"hello\", {\"a\": 1}] → 输出：验证 JSON 格式合法 → True")
+            if is_english:
+                examples.append(f"{inp}：{{\"name\": \"Alice\", \"age\": 30}} → {out}：extract name field → \"Alice\"")
+                examples.append(f"{inp}：[1, \"hello\", {{\"a\": 1}}] → {out}：validate JSON → True")
+            else:
+                examples.append(f"{inp}：{{\"name\": \"Alice\", \"age\": 30}} → {out}：提取 name 字段 → \"Alice\"")
+                examples.append(f"{inp}：[1, \"hello\", {{\"a\": 1}}] → {out}：验证 JSON 格式合法 → True")
         elif any(kw in instruction.lower() for kw in ('lru', 'cache', '缓存')):
-            examples.append("输入：set(1,'a'), get(1), set(2,'b') → 输出：'a', None（key=2未命中）")
-            examples.append("输入：capacity=2, set(1,'x'), set(2,'y'), set(3,'z') → 输出：key=1被淘汰")
+            if is_english:
+                examples.append(f"{inp}：set(1,'a'), get(1), set(2,'b') → {out}：'a', None (key=2 miss)")
+                examples.append(f"{inp}：capacity=2, set(1,'x'), set(2,'y'), set(3,'z') → {out}：key=1 evicted")
+            else:
+                examples.append(f"{inp}：set(1,'a'), get(1), set(2,'b') → {out}：'a', None（key=2未命中）")
+                examples.append(f"{inp}：capacity=2, set(1,'x'), set(2,'y'), set(3,'z') → {out}：key=1被淘汰")
         elif any(kw in instruction.lower() for kw in ('游戏', 'game', '脚本', 'script')):
-            examples.append("输入：蛇游戏 初始方向→右 → 输出：蛇头坐标+1")
-            examples.append("输入：2048 合并相同数字 → 输出：棋盘状态更新")
+            if is_english:
+                examples.append(f"{inp}：Snake game, initial direction→right → {out}：snake head coordinates+1")
+                examples.append(f"{inp}：2048 merge same numbers → {out}：board state update")
+            else:
+                examples.append(f"{inp}：蛇游戏 初始方向→右 → {out}：蛇头坐标+1")
+                examples.append(f"{inp}：2048 合并相同数字 → {out}：棋盘状态更新")
         elif any(kw in instruction.lower() for kw in ('二分', 'binary search')):
-            examples.append("输入：[1,3,5,7,9], target=7 → 输出：3（下标）")
-            examples.append("输入：[1,3,5,7,9], target=4 → 输出：-1（不存在）")
+            if is_english:
+                examples.append(f"{inp}：[1,3,5,7,9], target=7 → {out}：3 (index)")
+                examples.append(f"{inp}：[1,3,5,7,9], target=4 → {out}：-1 (not found)")
+            else:
+                examples.append(f"{inp}：[1,3,5,7,9], target=7 → {out}：3（下标）")
+                examples.append(f"{inp}：[1,3,5,7,9], target=4 → {out}：-1（不存在）")
         elif any(kw in instruction.lower() for kw in ('api', 'rest', '接口', 'endpoint')):
-            examples.append("输入：GET /users/1 → 输出：{code:0, data:{id:1,name:'alice'}}")
-            examples.append("输入：POST /users {name:'bob'} → 输出：{code:0, data:{id:2}}")
+            examples.append(f"{inp}：GET /users/1 → {out}：{{code:0, data:{{id:1,name:'alice'}}}}")
+            examples.append(f"{inp}：POST /users {{name:'bob'}} → {out}：{{code:0, data:{{id:2}}}}")
         elif any(kw in instruction.lower() for kw in ('dp', '动态规划', '爬楼梯')):
-            examples.append("输入：n=5 → 输出：8（爬楼梯方法数）")
-            examples.append("输入：n=0 → 输出：1（边界）")
+            if is_english:
+                examples.append(f"{inp}：n=5 → {out}：8 (climbing stairs count)")
+                examples.append(f"{inp}：n=0 → {out}：1 (base case)")
+            else:
+                examples.append(f"{inp}：n=5 → {out}：8（爬楼梯方法数）")
+                examples.append(f"{inp}：n=0 → {out}：1（边界）")
         else:
             # P1-A fix: provide meaningful examples based on code keywords, not generic placeholders
             instr_lower = instruction.lower()
             if any(kw in instr_lower for kw in ('sql', '数据库', 'db', 'database', 'select', 'insert', 'update', 'delete')):
-                examples.append("输入：SELECT * FROM users WHERE id = 1 → 输出：用户 alice 的完整信息")
-                examples.append("输入：INSERT INTO orders VALUES (1, 'item', 100) → 输出：插入成功，返回订单ID")
+                if is_english:
+                    examples.append(f"{inp}：SELECT * FROM users WHERE id = 1 → {out}：full info for user alice")
+                    examples.append(f"{inp}：INSERT INTO orders VALUES (1, 'item', 100) → {out}：success, return order ID")
+                else:
+                    examples.append(f"{inp}：SELECT * FROM users WHERE id = 1 → {out}：用户 alice 的完整信息")
+                    examples.append(f"{inp}：INSERT INTO orders VALUES (1, 'item', 100) → {out}：插入成功，返回订单ID")
             elif any(kw in instr_lower for kw in ('function', '函数', 'method', '方法', 'procedure')):
-                examples.append("输入：[1, 2, 3] → 输出：[1, 3]（过滤偶数）")
-                examples.append("输入：'hello world' → 输出：'HELLO WORLD'（转大写）")
+                if is_english:
+                    examples.append(f"{inp}：[1, 2, 3] → {out}：[1, 3] (filter even numbers)")
+                    examples.append(f"{inp}：'hello world' → {out}：'HELLO WORLD' (uppercase)")
+                else:
+                    examples.append(f"{inp}：[1, 2, 3] → {out}：[1, 3]（过滤偶数）")
+                    examples.append(f"{inp}：'hello world' → {out}：'HELLO WORLD'（转大写）")
             elif any(kw in instr_lower for kw in ('user', 'data', '数据', '处理', 'process')):
-                examples.append("输入：{'name': 'alice', 'age': 30} → 输出：验证必填字段存在 → True")
-                examples.append("输入：{'email': 'bad'} → 输出：格式校验失败 → {'error': 'invalid email'}")
+                if is_english:
+                    examples.append(f"{inp}：{{'name': 'alice', 'age': 30}} → {out}：validate required fields → True")
+                    examples.append(f"{inp}：{{'email': 'bad'}} → {out}：validation failed → {{'error': 'invalid email'}}")
+                else:
+                    examples.append(f"{inp}：{{'name': 'alice', 'age': 30}} → {out}：验证必填字段存在 → True")
+                    examples.append(f"{inp}：{{'email': 'bad'}} → {out}：格式校验失败 → {{'error': 'invalid email'}}")
             else:
                 # Generic fallback with concrete IO format
-                examples.append("输入：[1, 2, 3] → 输出：[1, 3]（过滤偶数）")
-                examples.append("输入：'hello' → 输出：'HELLO'（转大写）")
+                if is_english:
+                    examples.append(f"{inp}：[1, 2, 3] → {out}：[1, 3] (filter even numbers)")
+                    examples.append(f"{inp}：'hello' → {out}：'HELLO' (uppercase)")
+                else:
+                    examples.append(f"{inp}：[1, 2, 3] → {out}：[1, 3]（过滤偶数）")
+                    examples.append(f"{inp}：'hello' → {out}：'HELLO'（转大写）")
 
     elif instr_type == "explanation":
         # Detect language for consistent example style
@@ -1550,11 +1689,18 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
                 examples.append('类比：从已知到未知，按认知顺序逐步拆解')
 
     elif instr_type == "writing":
-        recommendations.append("- Few-shot：给1篇范文参考")
-        recommendations.append("- Chain-of-Thought：先列提纲再写")
-        recommendations.append("- Role：扮演专业文案撰写者")
-        examples.append('风格参考：开头用"你是否也遇到过..."引发共鸣')
-        examples.append('语气示例：面向程序员用"无需多余配置"')
+        if is_english:
+            recommendations.append("- Few-shot: Provide 1 sample article for reference")
+            recommendations.append("- Chain-of-Thought: Outline before writing")
+            recommendations.append("- Role: Act as a professional copywriter")
+            examples.append('Style reference: Start with "Have you ever experienced..." to create resonance')
+            examples.append('Tone example: For programmers use "no extra configuration needed"')
+        else:
+            recommendations.append("- Few-shot：给1篇范文参考")
+            recommendations.append("- Chain-of-Thought：先列提纲再写")
+            recommendations.append("- Role：扮演专业文案撰写者")
+            examples.append('风格参考：开头用"你是否也遇到过..."引发共鸣')
+            examples.append('语气示例：面向程序员用"无需多余配置"')
 
     elif instr_type in ("rejection_email", "notification_email", "complaint_email",
                          "apology_email", "report_email"):
@@ -1562,6 +1708,21 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         recommendations.append("- Role：扮演专业商务沟通顾问")
         recommendations.append("- Chain-of-Thought：明确目的→组织结构→措辞选择")
         examples.append("参考结构：称呼→开门见山→核心内容→积极收尾")
+
+    elif instr_type == "academic_writing":
+        # T16 fix: handle academic_writing with proper language
+        if is_english:
+            recommendations.append("- Few-shot: Provide 1 example abstract for reference")
+            recommendations.append("- Chain-of-Thought: Structure: background → method → findings → conclusion")
+            recommendations.append("- Role: Act as an academic writing expert")
+            examples.append('Structure: Background of the field and research gap...')
+            examples.append('Method: Describe the dataset, model, or experimental design...')
+        else:
+            recommendations.append("- Few-shot：给1篇范文摘要参考")
+            recommendations.append("- Chain-of-Thought：结构：背景→方法→发现→结论")
+            recommendations.append("- Role：扮演学术写作专家")
+            examples.append('结构参考：背景：该领域现状和研究空白...')
+            examples.append('方法：描述使用的方法、数据集或实验设计...')
 
     else:
         recommendations.append("- Zero-shot：直接给出清晰指令")

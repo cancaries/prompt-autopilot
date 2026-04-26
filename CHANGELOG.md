@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-04-26
 
 ### Fixed
+- **T2/T8 (English code examples)**: `get_technique_recommendations()` for `code` type now detects input language and returns English examples/techniques when input is English. Fixed examples from Chinese "输入/输出" to English "Input/Output".
+- **T4 (English writing template)**: `generate_fallback_prompt()` for `writing` type now uses English labels (Writing Task, Target Audience, etc.) when input is English. Also added English topic keywords without Chinese parentheticals.
+- **T7 (English explanation template)**: `generate_fallback_prompt()` for `explanation` type now uses English labels (Explanation Task, Target Audience, etc.) when input is English.
+- **T8 (Mixed language code)**: `get_technique_recommendations()` now detects language for code type and uses consistent language in examples.
+- **T15 (Sci-fi style)**: `generate_fallback_prompt()` for `creative_writing` type now detects sci-fi genre and uses appropriate style ("科幻小说风格：宏大叙事、探索未来、想象力丰富") instead of generic "通俗易懂，适合科普".
+- **T16 (Academic writing techniques)**: Added explicit `academic_writing` handling in `get_technique_recommendations()` with language-aware recommendations and examples instead of falling through to generic Chinese recommendations.
+
+### Fixed
 - **问题1 (T16 content pollution)**: `academic_writing` in `generate_fallback_prompt()` had hardcoded Few-shot examples (machine learning in medical imaging + unrelated blockchain in supply chain). Now dynamically uses `info['topic']` for the first example and omits the second unrelated example.
 - **问题2 (T24 closure examples)**: `explanation` in `get_technique_recommendations()` gave generic method descriptions for technical concepts. Added specific code examples for "闭包/closure" keywords: `def outer(x): def inner(y): return x + y; return inner` with demonstration.
 - **问题3 (T7 language inconsistency)**: English explanation prompts like "explain how blockchain works" returned Chinese analogies. Added `detect_language()` check at the start of explanation block; now returns English analogies and recommendations when input is English.
