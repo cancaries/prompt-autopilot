@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - **P1-B (Language confusion)**: Fixed `_extract_info()` to use `detect_language()` instead of hardcoded `"中文"`. English instructions (e.g. `write a blog post about AI`) now correctly output `"语言：英文"`. Affects T4, T7.
 - **P2 (Audience field)**: Fixed `_extract_info()` to infer audience from genre keywords (e.g. `"科幻"` → `"科幻小说读者"`) and `_extract_core_concept()` instead of embedding full instruction. Affects T15, T16, T27.
 - **P3 (Boundary description)**: Fixed `"空数组返回 0 或空列表"` → `"空数组应返回 None（因为平均值对空集无定义），调用方需自行处理空数组输入"`. Affects T10.
+- **T9/T18/T19/T21 (Insufficient info examples)**: Added `_get_insufficient_info_examples(instruction_type, lang)` to generate context-appropriate examples for the "指令信息不足" warning. Examples now adapt to task type: `code` → code examples, `test_generation` → pytest/unittest examples, `explanation` → explanation examples, `writing` → writing examples, `general` → diverse examples. Previously all cases showed the same generic examples regardless of detected task type.
 
 ## [1.0.2] - 2026-04-16
 
@@ -69,3 +70,9 @@ All notable changes to this project will be documented in this file.
 - Works with: OpenClaw, Cursor, Claude Code, Codex, any AI tool
 - CLI: `prompt-autopilot` and `pma` commands
 - Skill file for OpenClaw integration
+
+## [Unreleased] - 2026-04-27
+
+### Known Issue
+- **T2 (low severity)**: English code tasks still show Chinese technique section titles (e.g. "Chain-of-Thought：先分析最优子结构再写") while few-shot examples are correctly in English. Not blocking; core functionality works. Consider applying the same language-detection fix used in explanation branch.
+

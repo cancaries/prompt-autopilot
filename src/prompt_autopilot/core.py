@@ -921,6 +921,190 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
     return info
 
 
+def _get_insufficient_info_examples(instruction_type: str, lang: str) -> str:
+    """
+    Return context-appropriate examples for the 'insufficient info' warning.
+    Examples are tailored to the detected instruction_type.
+    """
+    if instruction_type == "code":
+        code_examples = {
+            "zh": [
+                ("写一个函数", "用 Python 写一个函数，接收整数数组返回平均值保留2位小数"),
+                ("写排序算法", "用 Python 实现快速排序，支持升序/降序切换"),
+                ("游戏脚本", "用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制"),
+            ],
+            "en": [
+                ("write a function", "Write a Python function that takes a list of integers and returns the average rounded to 2 decimal places"),
+                ("write a sorting algorithm", "Implement quicksort in Python that supports ascending/descending order"),
+                ("game script", "Write a Snake game using Python + Pygame with arrow key controls"),
+            ]
+        }
+        rows = code_examples.get(lang, code_examples["en"])
+        sep = "|" if lang == "zh" else "|"
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type == "test_generation":
+        test_examples = {
+            "zh": [
+                ("写单元测试", "用 pytest 为函数 calculate_bonus(salary, years) 编写单元测试，覆盖正常值、边界值（0年）和异常值（负工资）"),
+                ("写测试用例", "用 unittest 为 UserService 的登录功能写测试，包括成功登录、密码错误、用户不存在三种情况"),
+                ("测试这个函数", "用 pytest 测试 parse_date(date_str) 函数，测试用例：'2024-01-01'→成功、'2024/01/01'→失败、None→抛出异常"),
+            ],
+            "en": [
+                ("write unit tests", "Write pytest unit tests for function calculate_bonus(salary, years), covering normal values, boundary (0 years), and exceptions (negative salary)"),
+                ("write test cases", "Write unittest tests for UserService login, covering: successful login, wrong password, user not found"),
+                ("test this function", "Test parse_date(date_str) with pytest: '2024-01-01'→success, '2024/01/01'→fail, None→exception"),
+            ]
+        }
+        rows = test_examples.get(lang, test_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type == "code_review":
+        review_examples = {
+            "zh": [
+                ("review这段代码", "review这段Python代码，重点检查性能问题和潜在的安全漏洞"),
+                ("代码审查", "审查这段React组件代码，关注内存泄漏和渲染性能"),
+            ],
+            "en": [
+                ("review this code", "Review this Python code, focusing on performance issues and potential security vulnerabilities"),
+                ("code review", "Audit this React component for memory leaks and rendering performance"),
+            ]
+        }
+        rows = review_examples.get(lang, review_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type in ("rejection_email", "apology_email", "notification_email", "complaint_email", "report_email"):
+        email_examples = {
+            "zh": [
+                ("写一封邮件", "写一封拒绝面试者的邮件，语气专业友善，姓名李明，应聘后端工程师"),
+                ("写邮件", "帮我的团队写一封项目延期的通知邮件，说明原因并提供新的时间表"),
+            ],
+            "en": [
+                ("write an email", "Write a professional rejection email to candidate Wang Wei for the Software Engineer position"),
+                ("send notification", "Send a team notification about project delay, explaining the reason and providing a revised timeline"),
+            ]
+        }
+        rows = email_examples.get(lang, email_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type in ("creative_writing", "academic_writing", "writing"):
+        writing_examples = {
+            "zh": [
+                ("写文章", "写一篇关于AI发展趋势的博客，目标读者是初级工程师，要求包含实际案例"),
+                ("写小说", "写一段科幻小说开头，设定在22世纪的火星城市，主角是一名考古学家"),
+            ],
+            "en": [
+                ("write an article", "Write a blog post about AI trends targeting junior engineers, with real-world examples"),
+                ("write a story", "Write the opening of a sci-fi story set in a 22nd century Mars city, protagonist is an archaeologist"),
+            ]
+        }
+        rows = writing_examples.get(lang, writing_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type == "explanation":
+        explain_examples = {
+            "zh": [
+                ("解释量子纠缠", "用通俗语言解释量子纠缠的概念，目标读者是高中生，包含简单比喻"),
+                ("讲解区块链", "向初级工程师讲解区块链的工作原理，从分布式账本开始"),
+            ],
+            "en": [
+                ("explain quantum entanglement", "Explain quantum entanglement in simple terms for high school students, with analogies"),
+                ("explain blockchain", "Explain how blockchain works to junior engineers, starting from distributed ledger concepts"),
+            ]
+        }
+        rows = explain_examples.get(lang, explain_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    elif instruction_type == "general":
+        general_examples = {
+            "zh": [
+                ("AI", "帮我写一篇关于AI发展趋势的博客，目标读者是初级工程师"),
+                ("做好这个功能", "用Python实现用户登录功能，支持JWT认证，密码用bcrypt哈希"),
+                ("写代码", "用Python写一个快速排序算法，支持升序和降序"),
+            ],
+            "en": [
+                ("AI", "Write a blog post about AI development trends for junior engineers"),
+                ("do this feature", "Implement user login in Python with JWT authentication and bcrypt password hashing"),
+                ("write code", "Implement quicksort in Python supporting both ascending and descending order"),
+            ]
+        }
+        rows = general_examples.get(lang, general_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+    else:
+        # Default fallback
+        default_examples = {
+            "zh": [
+                ("写一个函数", "用 Python 写一个函数，接收用户名列表，返回最长的用户名"),
+                ("LRU 缓存", "用 Python 实现 LRU 缓存，容量 100，支持 get/put 操作，O(1) 时间复杂度"),
+                ("游戏脚本", "用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制"),
+            ],
+            "en": [
+                ("write a function", "Write a Python function that receives a list of usernames and returns the longest one"),
+                ("LRU cache", "Implement an LRU cache in Python with capacity 100, supporting get/put operations with O(1) time complexity"),
+                ("game script", "Write a Snake game using Python + Pygame with arrow key controls"),
+            ]
+        }
+        rows = default_examples.get(lang, default_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
+
 def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
     """
     Fallback template-based prompt generation (no LLM).
@@ -939,6 +1123,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
                                   for p in explanation_patterns)
     
     if len(stripped) < 8 and not is_explanation_pattern:
+        examples_section = _get_insufficient_info_examples(instruction_type, lang)
         return f"""## ⚠️ 指令信息不足
 
 您的指令「{stripped}」太简略，无法生成有针对性的优化 prompt。
@@ -950,13 +1135,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - **具体场景**：在什么情况下使用？
 - **技术要求**：有什么特殊约束吗？
 
-### 📝 示例
-
-| 简短 ❌ | 详细 ✅ |
-|--------|--------|
-| AI | 帮我写一篇关于AI发展趋势的博客 |
-| 做好这个功能 | 用Python实现用户登录功能，支持JWT认证 |
-| 写代码 | 用Python写一个快速排序算法 |
+{examples_section}
 
 ### 🔧 优化后的 prompt 将包含
 - 清晰的任务描述
@@ -1110,6 +1289,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             is_input_generic = any(p in input_desc for p in GENERIC_INPUT_PATTERNS)
             is_output_generic = any(p in output_desc for p in GENERIC_OUTPUT_PATTERNS)
             if is_input_generic and is_output_generic:
+                examples_section = _get_insufficient_info_examples(instruction_type, lang)
                 if lang == 'zh':
                     return f"""## ⚠️ 指令信息不足
 
@@ -1124,13 +1304,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
 - **输出结果**：期望输出什么？
 - **技术要求**：有什么特殊约束吗？
 
-### 📝 示例
-
-| 简短 ❌ | 详细 ✅ |
-|--------|--------|
-| 写一个函数 | 用 Python 写一个函数，接收用户名列表，返回最长的用户名 |
-| LRU 缓存 | 用 Python 实现 LRU 缓存，容量 100，支持 get/put 操作，O(1) 时间复杂度 |
-| 游戏脚本 | 用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制 |
+{examples_section}
 
 ### 🔧 优化后的 prompt 将包含
 - 清晰的任务描述
@@ -1151,13 +1325,7 @@ Consider including:
 - **Expected output**: What should the output look like?
 - **Technical requirements**: Any specific constraints?
 
-### 📝 Examples
-
-| Vague ❌ | Specific ✅ |
-|----------|-------------|
-| write a function | Write a Python function that receives a list of usernames and returns the longest one |
-| LRU cache | Implement an LRU cache in Python with capacity 100, supporting get/put operations with O(1) time complexity |
-| game script | Write a Snake game using Python + Pygame with arrow key controls |
+{examples_section}
 
 ### 🔧 An optimized prompt will include
 - Clear task description
@@ -1181,6 +1349,7 @@ Consider including:
 {boundary}"""
         # Issue #6 fix: if _infer_code_defaults returned None or both input/output
         # are generic placeholders, the instruction is too vague - return warning
+        examples_section = _get_insufficient_info_examples(instruction_type, lang)
         if lang == 'zh':
             return f"""## ⚠️ 指令信息不足
 
@@ -1195,13 +1364,7 @@ Consider including:
 - **输出结果**：期望输出什么？
 - **技术要求**：有什么特殊约束吗？
 
-### 📝 示例
-
-| 简短 ❌ | 详细 ✅ |
-|--------|--------|
-| 写一个函数 | 用 Python 写一个函数，接收用户名列表，返回最长的用户名 |
-| LRU 缓存 | 用 Python 实现 LRU 缓存，容量 100，支持 get/put 操作，O(1) 时间复杂度 |
-| 游戏脚本 | 用 Python + Pygame 写一个贪吃蛇游戏，支持方向键控制 |
+{examples_section}
 
 ### 🔧 优化后的 prompt 将包含
 - 清晰的任务描述
@@ -1222,13 +1385,7 @@ Consider including:
 - **Expected output**: What should the output look like?
 - **Technical requirements**: Any specific constraints?
 
-### 📝 Examples
-
-| Vague ❌ | Specific ✅ |
-|----------|-------------|
-| write a function | Write a Python function that receives a list of usernames and returns the longest one |
-| LRU cache | Implement an LRU cache in Python with capacity 100, supporting get/put operations with O(1) time complexity |
-| game script | Write a Snake game using Python + Pygame with arrow key controls |
+{examples_section}
 
 ### 🔧 An optimized prompt will include
 - Clear task description
