@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-04-29
+
+### Fixed
+- **T11/T23 (Duplicate title prefix)**: Fixed `generate_fallback_prompt()` for `code` type where task title was "用 Python 实现：用Python实现..." (duplicate prefix). Now strips the "用{Lang}实现" pattern from the instruction before prepending the prefix, so title correctly shows "用 Python 实现：输入列表输出平方".
+- **T15/T16 (Hardcoded 7.0 score)**: Added bonuses in `evaluate_version()` for `creative_writing` and `academic_writing` instruction types. Previously these types had no bonus blocks, resulting in all scores at base 7.0. Now properly rewards well-structured templates with specificity/completeness bonuses (T15 sci-fi: 7.0→9.25, T16 academic: 7.0→9.25).
+- **T4/T7 (Mixed language field)**: Changed `_extract_info()` to return `info["language"] = "English"` (not "英文") for English inputs, fixing "Language：英文" mixed-language output in English templates.
+- **T19 (SQL optimization examples)**: Added SQL optimization-specific few-shot examples in `get_technique_recommendations()` when instruction contains SQL optimization keywords ("优化", "optimize", "优化这段sql"). Examples now show EXPLAIN analysis and index recommendations instead of generic SELECT/INSERT query examples.
+
 ## [Unreleased] - 2026-04-26
 
 ### Fixed

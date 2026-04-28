@@ -761,7 +761,8 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
     # P1-B fix: detect language properly using detect_language(), not hardcoded "中文"
     detected_lang = detect_language(instruction)
     if detected_lang == "en":
-        info["language"] = "英文"
+        # T4/T7 fix: use English label "English" not Chinese "英文"
+        info["language"] = "English"
     elif detected_lang == "mixed":
         info["language"] = "中英双语"
     # else: keep "中文" default
@@ -1194,6 +1195,22 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             lang_default = defaults['lang']
             perf = defaults.get('constraints', '时间复杂度：O(n)\n- 空间复杂度：O(1)')
             boundary = defaults.get('boundary', '请补充边界情况处理')
+
+            # T11/T23 fix: strip "用{Lang}实现" prefix from instruction to avoid title duplication
+            # e.g. "用Python实现输入列表输出平方" → "输入列表输出平方"
+            task_desc = stripped
+            for lang_name in ['Python', 'Java', 'Go', 'Rust', 'JavaScript', 'SQL']:
+                prefix = f'用{lang_name}实现'
+                if task_desc.startswith(prefix):
+                    task_desc = task_desc[len(prefix):].strip()
+                    break
+            # Also try lowercase variants
+            if task_desc == stripped:
+                for lang_name in ['python', 'java', 'go', 'rust', 'javascript', 'sql']:
+                    prefix = f'用{lang_name}实现'
+                    if task_desc.startswith(prefix):
+                        task_desc = task_desc[len(prefix):].strip()
+                        break
             
             is_sorting = any(kw in stripped.lower() for kw in ('排序', 'sort', 'quicksort', 'mergesort'))
             if is_sorting:
@@ -1334,7 +1351,7 @@ Consider including:
 - Quality standards"""
             
             return f"""## 🎯 任务
-用 {lang_default} 实现：{stripped}
+用 {lang_default} 实现：{task_desc}
 
 ## 📥 输入
 - {defaults.get('input', '由调用方提供')}
@@ -1748,7 +1765,15 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         else:
             # P1-A fix: provide meaningful examples based on code keywords, not generic placeholders
             instr_lower = instruction.lower()
-            if any(kw in instr_lower for kw in ('sql', '数据库', 'db', 'database', 'select', 'insert', 'update', 'delete')):
+            # T19 fix: SQL optimization examples (before generic SQL query examples)
+            if any(kw in instr_lower for kw in ('优化', 'optimize', '优化这段sql', 'optimize sql', 'sql 优化')):
+                if is_english:
+                    examples.append(f"{inp}：SELECT * FROM orders WHERE status='pending' → {out}：EXPLAIN shows full table scan → add index on (status, created_at)")
+                    examples.append(f"{inp}：SELECT u.*, o.* FROM users u JOIN orders o ON u.id=o.user_id → {out}：slow join → use proper indexing, limit columns")
+                else:
+                    examples.append(f"{inp}：SELECT * FROM orders WHERE status='pending' → {out}：EXPLAIN 显示全表扫描 → 添加 (status, created_at) 索引")
+                    examples.append(f"{inp}：SELECT u.*, o.* FROM users u JOIN orders o ON u.id=o.user_id → {out}：JOIN 慢 → 使用索引，只选必要列")
+            elif any(kw in instr_lower for kw in ('sql', '数据库', 'db', 'database', 'select', 'insert', 'update', 'delete')):
                 if is_english:
                     examples.append(f"{inp}：SELECT * FROM users WHERE id = 1 → {out}：full info for user alice")
                     examples.append(f"{inp}：INSERT INTO orders VALUES (1, 'item', 100) → {out}：success, return order ID")
@@ -2123,6 +2148,30 @@ def evaluate_version(version: VersionResult, analysis: AnalysisResult) -> Evalua
             specificity_score += 2.5
             completeness_score += 1.5
         if _has_real_content(template, ["类比", "analogy"]):
+            completeness_score += 1.5
+            specificity_score += 1.0
+
+    elif instr_type == "creative_writing":
+        # T15 fix: add bonuses for well-structured creative writing templates
+        if _has_real_content(template, ["题材", "风格", "受众", "目标读者", "读者"]):
+            specificity_score += 2.5
+            completeness_score += 1.5
+        if _has_real_content(template, ["结构", "开头", "发展", "结尾"]):
+            completeness_score += 2.0
+            specificity_score += 1.0
+        if _has_real_content(template, ["语气", "风格", "语言"]):
+            specificity_score += 1.5
+        if "```" in template or "开头：" in template:
+            completeness_score += 1.0
+
+    elif instr_type == "academic_writing":
+        # T16 fix: add bonuses for well-structured academic writing templates
+        if _has_real_content(template, ["背景", "方法", "发现", "结论", "摘要结构"]):
+            specificity_score += 3.0
+            completeness_score += 2.0
+        if _has_real_content(template, ["学术", "研究", "数据集", "实验"]):
+            specificity_score += 1.5
+        if _has_real_content(template, ["示例", "few-shot", "Few-shot", "范文"]):
             completeness_score += 1.5
             specificity_score += 1.0
 
