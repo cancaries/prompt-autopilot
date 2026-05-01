@@ -1808,9 +1808,9 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
         detected_lang = detect_language(instruction)
         is_english = detected_lang == "en"
         
-        recommendations.append("- Role：扮演耐心的老师" if not is_english else "- Role：Act as a patient teacher")
-        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解" if not is_english else "- Chain-of-Thought：Break down step by step")
-        recommendations.append("- Few-shot：给1个理解过程的示例" if not is_english else "- Few-shot：Give 1 example to illustrate the understanding process")
+        recommendations.append("- Role：扮演耐心的老师" if not is_english else "- Role: Act as a patient teacher")
+        recommendations.append("- Chain-of-Thought：按认知顺序逐步拆解" if not is_english else "- Chain-of-Thought: Break down step by step")
+        recommendations.append("- Few-shot：给1个理解过程的示例" if not is_english else "- Few-shot: Give 1 example to illustrate the understanding process")
         # Issue #5 fix: Use topic-relevant analogies instead of generic ones
         instr_lower = instruction.lower()
         if any(kw in instr_lower for kw in ["闭包", "closure", "python closure", "js closure"]):
@@ -1907,9 +1907,15 @@ def get_technique_recommendations(instr_type: str, instruction: str) -> tuple[st
             examples.append('方法：描述使用的方法、数据集或实验设计...')
 
     else:
-        recommendations.append("- Zero-shot：直接给出清晰指令")
-        recommendations.append("- Chain-of-Thought：分步骤描述任务")
-        recommendations.append("- Role：明确期望的执行者身份")
+        # Handles: general, test_generation, code_review, creative_writing (partial), and any unhandled type
+        if is_english:
+            recommendations.append("- Zero-shot: Provide clear, direct instructions")
+            recommendations.append("- Chain-of-Thought: Break down the task into steps")
+            recommendations.append("- Role: Clearly specify the expected executor identity")
+        else:
+            recommendations.append("- Zero-shot：直接给出清晰指令")
+            recommendations.append("- Chain-of-Thought：分步骤描述任务")
+            recommendations.append("- Role：明确期望的执行者身份")
 
     return "\n".join(recommendations), "\n".join(examples)
 

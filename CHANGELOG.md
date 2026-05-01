@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-05-02
+
+### Fixed
+- **T4/T7/T21 (Display label language mismatch)**: `display.py` had hardcoded Chinese labels "💡 适用技术" and "📖 示例（Few-shot）" regardless of input language. Added `_is_chinese_text()` helper to detect content language and `_get_lang_aware_labels()` to return language-appropriate labels. Now English inputs show "💡 Applicable Techniques" and "📖 Examples (Few-shot)", Chinese inputs show "💡 适用技术" and "📖 示例（Few-shot）".
+- **T7 (English explanation techniques punctuation)**: Fixed English explanation techniques that used Chinese colon "：" instead of English ":" (e.g., "- Role：Act as a patient teacher" → "- Role: Act as a patient teacher").
+- **T21 (General type language fallback)**: The `else` block in `get_technique_recommendations()` (handling `general`, `test_generation`, `code_review` types) had hardcoded Chinese recommendations with no language awareness. Added `is_english` check to return English recommendations for English inputs.
+
 ## [Unreleased] - 2026-04-29
 
 ### Fixed

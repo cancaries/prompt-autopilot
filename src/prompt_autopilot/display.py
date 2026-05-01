@@ -15,7 +15,23 @@ try:
 except ImportError:
     HAS_RICH = False
 
-from .core import OptimizationResult
+from .core import OptimizationResult, detect_language
+
+
+def _is_chinese_text(text: str) -> bool:
+    """Check if text contains primarily Chinese characters."""
+    if not text:
+        return False
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    return chinese_chars > len(text) * 0.3
+
+
+def _get_lang_aware_labels(is_chinese: bool) -> tuple[str, str]:
+    """Get language-aware labels for techniques and examples sections."""
+    if is_chinese:
+        return ("💡 适用技术", "📖 示例（Few-shot）")
+    return ("💡 Applicable Techniques", "📖 Examples (Few-shot)")
+
 
 class DisplayStyle(Enum):
     """Output display style."""
@@ -94,14 +110,16 @@ def _format_version_block(version: dict, evaluation: dict) -> list[str]:
             lines.append(line)
 
     # Add technique recommendations and examples
+    is_chinese = _is_chinese_text(applicable_techniques) or _is_chinese_text(examples)
+    tech_label, example_label = _get_lang_aware_labels(is_chinese)
     if applicable_techniques:
-        lines.append("\n\n💡 适用技术")
+        lines.append(f"\n\n{tech_label}")
         for tech in applicable_techniques.split('\n'):
             if tech.strip():
                 lines.append(tech)
 
     if examples:
-        lines.append("\n📖 示例（Few-shot）")
+        lines.append(f"\n{example_label}")
         for ex in examples.split('\n'):
             if ex.strip():
                 lines.append(ex)
@@ -172,13 +190,15 @@ def format_markdown(result: OptimizationResult, show_all: bool = True) -> str:
         # Add technique recommendations and examples for recommended version
         applicable_techniques = rv.get('applicable_techniques', '')
         examples = rv.get('examples', '')
+        is_chinese = _is_chinese_text(applicable_techniques) or _is_chinese_text(examples)
+        tech_label, example_label = _get_lang_aware_labels(is_chinese)
         if applicable_techniques:
-            lines.append("\n\n💡 适用技术")
+            lines.append(f"\n\n{tech_label}")
             for tech in applicable_techniques.split('\n'):
                 if tech.strip():
                     lines.append(tech)
         if examples:
-            lines.append("\n📖 示例（Few-shot）")
+            lines.append(f"\n{example_label}")
             for ex in examples.split('\n'):
                 if ex.strip():
                     lines.append(ex)
@@ -239,15 +259,17 @@ def _console_version_block(console, version: dict, evaluation: dict, recommended
     # Add technique recommendations and examples
     applicable_techniques = version.get('applicable_techniques', '')
     examples = version.get('examples', '')
+    is_chinese = _is_chinese_text(applicable_techniques) or _is_chinese_text(examples)
+    tech_label, example_label = _get_lang_aware_labels(is_chinese)
     if applicable_techniques:
         console.print()
-        console.print(f"[bold]💡 适用技术[/bold]")
+        console.print(f"[bold]{tech_label}[/bold]")
         for tech in applicable_techniques.split('\n'):
             if tech.strip():
                 console.print(f"  {tech}")
     if examples:
         console.print()
-        console.print(f"[bold]📖 示例（Few-shot）[/bold]")
+        console.print(f"[bold]{example_label}[/bold]")
         for ex in examples.split('\n'):
             if ex.strip():
                 console.print(f"  {ex}")
@@ -321,15 +343,17 @@ def format_rich(result: OptimizationResult, show_all: bool = True) -> str:
         # Add technique recommendations and examples for recommended version
         applicable_techniques = rv.get('applicable_techniques', '')
         examples = rv.get('examples', '')
+        is_chinese = _is_chinese_text(applicable_techniques) or _is_chinese_text(examples)
+        tech_label, example_label = _get_lang_aware_labels(is_chinese)
         if applicable_techniques:
             console.print()
-            console.print(f"[bold]💡 适用技术[/bold]")
+            console.print(f"[bold]{tech_label}[/bold]")
             for tech in applicable_techniques.split('\n'):
                 if tech.strip():
                     console.print(f"  {tech}")
         if examples:
             console.print()
-            console.print(f"[bold]📖 示例（Few-shot）[/bold]")
+            console.print(f"[bold]{example_label}[/bold]")
             for ex in examples.split('\n'):
                 if ex.strip():
                     console.print(f"  {ex}")
