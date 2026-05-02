@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-05-03
+
+### Fixed
+- **T19 (SQL optimization examples in insufficient info)**: `_get_insufficient_info_examples()` for `code` type now shows SQL optimization examples (EXPLAIN analysis, index optimization) instead of Python code examples. When user inputs "优化这段SQL", the insufficient-info examples table now shows SQL-specific examples.
+- **T21 (Chinese prompt output Chinese examples)**: Fixed `general_examples` handling in `_get_insufficient_info_examples()` to prefer Chinese examples when the instruction matches a key in `general_examples["zh"]` even if language is detected as English. Now "AI" input shows Chinese examples like "帮我写一篇关于AI发展趋势的博客" instead of English "Write a blog post about AI...".
+- **T27 (Context detail "5天" not captured)**: `complaint_email` template in `generate_fallback_prompt()` now extracts time/duration patterns (e.g., "5天", "3小时") from the instruction and fills them into the template. Input "回复客户投诉订单延迟了5天" now outputs "确认问题：订单延迟了5天，表明我们已收到并重视此反馈" instead of generic "复述客户投诉的核心问题".
+
 ## [Unreleased] - 2026-05-02
 
 ### Fixed

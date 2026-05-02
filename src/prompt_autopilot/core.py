@@ -922,11 +922,36 @@ def _extract_info(instruction: str, instruction_type: str = None) -> dict:
     return info
 
 
-def _get_insufficient_info_examples(instruction_type: str, lang: str) -> str:
+def _get_insufficient_info_examples(instruction_type: str, lang: str, instruction: str = "") -> str:
     """
     Return context-appropriate examples for the 'insufficient info' warning.
     Examples are tailored to the detected instruction_type.
     """
+    instr_lower = instruction.lower()
+    # T19 fix: SQL optimization should show SQL examples, not Python code examples
+    if any(kw in instr_lower for kw in ('优化', 'optimize', '优化这段sql', 'optimize sql', 'sql 优化')):
+        sql_opt_examples = {
+            "zh": [
+                ("优化这段SQL", "优化这条SQL：SELECT * FROM orders WHERE status='pending'，添加索引优化查询性能，目标查询时间<100ms"),
+                ("SQL优化", "优化慢查询：SELECT u.*, o.* FROM users u JOIN orders o ON u.id=o.user_id，分析执行计划并添加适当索引"),
+                ("优化SQL性能", "优化分页查询：SELECT * FROM logs ORDER BY created_at LIMIT 100 OFFSET 10000，使用游标分页替代OFFSET"),
+            ],
+            "en": [
+                ("optimize this SQL", "Optimize this SQL: SELECT * FROM orders WHERE status='pending', add index to improve query performance, target <100ms"),
+                ("SQL optimization", "Optimize slow query: SELECT u.*, o.* FROM users u JOIN orders o ON u.id=o.user_id, analyze EXPLAIN and add proper indexes"),
+                ("optimize SQL performance", "Optimize pagination: SELECT * FROM logs ORDER BY created_at LIMIT 100 OFFSET 10000, use cursor pagination instead of OFFSET"),
+            ]
+        }
+        rows = sql_opt_examples.get(lang, sql_opt_examples["en"])
+        vague = "简短 ❌" if lang == "zh" else "Vague ❌"
+        specific = "详细 ✅" if lang == "zh" else "Specific ✅"
+        rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
+        return f"""### 📝 示例
+
+| {vague} | {specific} |
+|--------|--------|
+{rows_md}"""
+
     if instruction_type == "code":
         code_examples = {
             "zh": [
@@ -1071,7 +1096,11 @@ def _get_insufficient_info_examples(instruction_type: str, lang: str) -> str:
                 ("write code", "Implement quicksort in Python supporting both ascending and descending order"),
             ]
         }
-        rows = general_examples.get(lang, general_examples["en"])
+        # T21 fix: If instruction matches a key in Chinese examples, prefer Chinese
+        effective_lang = lang
+        if lang == "en" and instr_lower.strip() in [k.lower() for k, _ in general_examples["zh"]]:
+            effective_lang = "zh"
+        rows = general_examples.get(effective_lang, general_examples["en"])
         vague = "简短 ❌" if lang == "zh" else "Vague ❌"
         specific = "详细 ✅" if lang == "zh" else "Specific ✅"
         rows_md = "\n".join(f"| {v} | {s} |" for v, s in rows)
@@ -1124,7 +1153,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
                                   for p in explanation_patterns)
     
     if len(stripped) < 8 and not is_explanation_pattern:
-        examples_section = _get_insufficient_info_examples(instruction_type, lang)
+        examples_section = _get_insufficient_info_examples(instruction_type, lang, instruction)
         return f"""## ⚠️ 指令信息不足
 
 您的指令「{stripped}」太简略，无法生成有针对性的优化 prompt。
@@ -1306,7 +1335,7 @@ def generate_fallback_prompt(instruction: str, instruction_type: str) -> str:
             is_input_generic = any(p in input_desc for p in GENERIC_INPUT_PATTERNS)
             is_output_generic = any(p in output_desc for p in GENERIC_OUTPUT_PATTERNS)
             if is_input_generic and is_output_generic:
-                examples_section = _get_insufficient_info_examples(instruction_type, lang)
+                examples_section = _get_insufficient_info_examples(instruction_type, lang, instruction)
                 if lang == 'zh':
                     return f"""## ⚠️ 指令信息不足
 
@@ -1366,7 +1395,7 @@ Consider including:
 {boundary}"""
         # Issue #6 fix: if _infer_code_defaults returned None or both input/output
         # are generic placeholders, the instruction is too vague - return warning
-        examples_section = _get_insufficient_info_examples(instruction_type, lang)
+        examples_section = _get_insufficient_info_examples(instruction_type, lang, instruction)
         if lang == 'zh':
             return f"""## ⚠️ 指令信息不足
 
@@ -1463,12 +1492,38 @@ Consider including:
 - 重要信息加粗或列点"""
 
     if instruction_type == "complaint_email":
+        # T27 fix: Extract specific details from instruction to fill into template
+        import re
+        time_patterns = [
+            (r'(\d+)\s*天', '天'),
+            (r'(\d+)\s*小时', '小时'),
+            (r'(\d+)\s*分钟', '分钟'),
+            (r'(\d+)\s*秒', '秒'),
+            (r'(\d+)\s*周', '周'),
+            (r'(\d+)\s*月', '月'),
+        ]
+        extracted_detail = ""
+        for pattern, unit in time_patterns:
+            match = re.search(pattern, stripped)
+            if match:
+                extracted_detail = f"订单延迟了{match.group(1)}{unit}"
+                break
+        if not extracted_detail:
+            # Try to extract generic issue description
+            issue_match = re.search(r'投诉(.+)', stripped)
+            if issue_match:
+                extracted_detail = f"客户投诉：{issue_match.group(1).strip()}"
+        
+        confirm_problem = "复述客户投诉的核心问题"
+        if extracted_detail:
+            confirm_problem = f"确认问题：{extracted_detail}，表明我们已收到并重视此反馈"
+        
         return f"""## 🎯 任务
 回复一封客户投诉邮件
 
 ## 📧 邮件结构
 1. **称呼**（感谢来信，表明收到）
-2. **确认问题**（复述客户投诉的核心问题）
+2. **{confirm_problem}**
 3. **道歉**
 4. **调查说明**（我们已采取/正在采取的措施）
 5. **解决方案**（具体补救/赔偿方案）
